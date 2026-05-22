@@ -14,7 +14,8 @@ const { generateCoverLetter } = require('../agents/cover-letter');
 const { getCompanyBrief } = require('../agents/company-brief');
 const { findOtherRoles } = require('../agents/other-roles');
 const { generateInterviewBrief } = require('../agents/interview-prep');
-const { saveApplicationPackage, saveInterviewBrief } = require('../services/output-writer');
+const { researchSalary } = require('../agents/salary-researcher');
+const { saveApplicationPackage, saveInterviewBrief, saveSalaryBrief } = require('../services/output-writer');
 const { syncToSheets, updateSheetStatus } = require('../services/sheets');
 
 const OUTPUTS_DIR = path.join(__dirname, '..', 'outputs');
@@ -78,6 +79,7 @@ app.get('/api/applications/:id', (req, res) => {
     companyBrief: folder ? readFile(path.join(folder, 'company-brief.json')) : null,
     otherRoles: folder ? readFile(path.join(folder, 'other-roles.md')) : null,
     interviewPrep: folder ? readFile(path.join(folder, 'interview-prep.md')) : null,
+    salaryBrief: folder ? readFile(path.join(folder, 'salary-brief.json')) : null,
   };
 
   res.json({ ...application, files });
@@ -174,6 +176,24 @@ app.post('/api/prep/:id', async (req, res) => {
   updateApplicationStatus(found.id, 'interview-prep-ready');
 
   res.json({ success: true, briefPath: path.join(folder, 'interview-prep.md') });
+});
+
+app.post('/api/salary', async (req, res) => {
+  const { role, company, location, applicationId } = req.body;
+  if (!role || !company) throw new Error('role and company are required');
+
+  const salaryBrief = await researchSalary(role, company, location || null);
+
+  if (applicationId) {
+    const apps = getAllApplications();
+    const found = apps.find(a => a.id === applicationId);
+    if (found) {
+      const folder = findOutputsFolder(found.company, found.role);
+      if (folder) saveSalaryBrief(folder, salaryBrief, role, company);
+    }
+  }
+
+  res.json(salaryBrief);
 });
 
 // Global error handler — never sends HTML

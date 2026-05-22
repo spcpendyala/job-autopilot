@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { initDB, getAllApplications, updateApplicationStatus } = require('../services/db');
 const { generateInterviewBrief } = require('../agents/interview-prep');
-const { saveInterviewBrief } = require('../services/output-writer');
+const { researchSalary } = require('../agents/salary-researcher');
+const { saveInterviewBrief, saveSalaryBrief } = require('../services/output-writer');
 
 const OUTPUTS_DIR = path.join(__dirname, '..', 'outputs');
 
@@ -75,15 +76,20 @@ async function main() {
   saveInterviewBrief(folder, brief, app.role, app.company);
   updateApplicationStatus(app.id, 'interview-prep-ready');
 
+  console.log('Researching salary...');
+  const salaryBrief = await researchSalary(app.role, app.company, null);
+  saveSalaryBrief(folder, salaryBrief, app.role, app.company);
+  console.log('💰 Salary brief saved.');
+
   const questionCount = (brief.likelyQuestions || []).length;
   const themes = (brief.keyThemesToEmphasize || []).slice(0, 3).join(', ');
-  const range = brief.salaryContext?.estimatedRange || 'N/A';
+  const mr = salaryBrief.marketRange || {};
 
   console.log(`\n✅ Interview brief ready: ${folder}/interview-prep.md`);
   console.log('\nQuick preview:');
   console.log(`  — ${questionCount} questions generated`);
   console.log(`  — Key themes: ${themes}`);
-  console.log(`  — Salary range: ${range}`);
+  console.log(`💰 Salary range: ${salaryBrief.recommendedAsk} (market: ${mr.low} – ${mr.high})`);
 }
 
 main().catch(err => {

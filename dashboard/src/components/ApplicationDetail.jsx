@@ -9,7 +9,29 @@ const DOC_TABS = [
   { id: 'coverletter', label: 'Cover Letter' },
   { id: 'companybrief', label: 'Company Brief' },
   { id: 'interviewprep', label: 'Interview Prep' },
+  { id: 'salary', label: 'Salary' },
 ]
+
+function ScriptCard({ label, text }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(text || '').then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <div style={{ background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, padding: '14px 16px', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ color: '#888', fontSize: 11 }}>{label}</span>
+        <button onClick={copy} style={{ background: 'none', border: '1px solid #333', borderRadius: 4, color: copied ? '#22c55e' : '#888', fontSize: 11, padding: '2px 8px', cursor: 'pointer' }}>
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+      <div style={{ color: '#d0d0d0', fontSize: 13, lineHeight: 1.6, fontStyle: 'italic' }}>"{text}"</div>
+    </div>
+  )
+}
 
 function statusStyle(status) {
   const map = {
@@ -114,6 +136,77 @@ export default function ApplicationDetail({ appId, onClose }) {
             </button>
           </div>
         )
+      case 'salary': {
+        if (!files.salaryBrief) return (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <div style={{ color: '#888', marginBottom: 12 }}>No salary brief generated yet.</div>
+            <div style={{ color: '#666', fontSize: 13 }}>Run <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4 }}>npm run prep {data.id}</code> to generate.</div>
+          </div>
+        )
+        let sb
+        try { sb = JSON.parse(files.salaryBrief) } catch { return <pre className="doc-pre">{files.salaryBrief}</pre> }
+        const mr = sb.marketRange || {}
+        const ns = sb.negotiationScript || {}
+        return (
+          <div style={{ padding: '4px 0' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+              <div style={{ background: '#3d1515', border: '1px solid #ef4444', borderRadius: 8, padding: 16, textAlign: 'center' }}>
+                <div style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>LOW</div>
+                <div style={{ color: '#ef4444', fontSize: 20, fontWeight: 700 }}>{mr.low}</div>
+              </div>
+              <div style={{ background: '#3d2e00', border: '1px solid #eab308', borderRadius: 8, padding: 16, textAlign: 'center' }}>
+                <div style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>MID</div>
+                <div style={{ color: '#eab308', fontSize: 20, fontWeight: 700 }}>{mr.mid}</div>
+              </div>
+              <div style={{ background: '#14332a', border: '1px solid #22c55e', borderRadius: 8, padding: 16, textAlign: 'center' }}>
+                <div style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>HIGH</div>
+                <div style={{ color: '#22c55e', fontSize: 20, fontWeight: 700 }}>{mr.high}</div>
+              </div>
+            </div>
+
+            <div style={{ background: '#0d1f3c', border: '1px solid #3b82f6', borderRadius: 8, padding: 20, textAlign: 'center', marginBottom: 20 }}>
+              <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>YOUR ASK</div>
+              <div style={{ color: '#3b82f6', fontSize: 34, fontWeight: 700 }}>{sb.recommendedAsk}</div>
+              <div style={{ color: '#666', fontSize: 12, marginTop: 8 }}>Anchor: {sb.anchorPoint} · Walk Away: {sb.walkAwayNumber}</div>
+            </div>
+
+            {sb.reasoning && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>Why These Numbers</div>
+                <div style={{ color: '#888', fontSize: 13, lineHeight: 1.6 }}>{sb.reasoning}</div>
+              </div>
+            )}
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>What to Say</div>
+              <ScriptCard label='When asked "What are your salary expectations?"' text={ns.openingLine} />
+              <ScriptCard label="When they counter below your ask" text={ns.counterOffer} />
+              <ScriptCard label="To close or defer" text={ns.closingLine} />
+            </div>
+
+            {(sb.benefitsToNegotiate || []).length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>Also Negotiate</div>
+                <div style={{ background: '#1a1a1a', borderRadius: 8, padding: '4px 16px' }}>
+                  {sb.benefitsToNegotiate.map((b, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < sb.benefitsToNegotiate.length - 1 ? '1px solid #2a2a2a' : 'none' }}>
+                      <span style={{ color: '#22c55e', fontSize: 16 }}>☐</span>
+                      <span style={{ color: '#d0d0d0', fontSize: 13 }}>{b}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {sb.marketContext && (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>Market Context</div>
+                <div style={{ color: '#888', fontSize: 13, lineHeight: 1.6 }}>{sb.marketContext}</div>
+              </div>
+            )}
+          </div>
+        )
+      }
       default:
         return null
     }

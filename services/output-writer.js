@@ -189,4 +189,60 @@ function saveInterviewBrief(applicationFolder, brief, role, company) {
   fs.writeFileSync(path.join(applicationFolder, 'interview-prep.md'), md, 'utf8');
 }
 
-module.exports = { saveApplicationPackage, saveInterviewBrief };
+function buildSalaryBriefMd(role, company, brief) {
+  const date = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const mr = brief.marketRange || {};
+  const ns = brief.negotiationScript || {};
+  const lines = [];
+
+  lines.push(`# Salary Brief — ${role || 'Role'} at ${company || 'Company'}`);
+  lines.push(`Generated: ${date}`);
+  lines.push('');
+  lines.push('## Market Range');
+  lines.push(`Low: ${mr.low} | Mid: ${mr.mid} | High: ${mr.high} (${mr.currency})`);
+  lines.push(`Data: ${mr.dataQuality}`);
+  lines.push('');
+  lines.push('## Your Numbers');
+  lines.push(`**Ask:** ${brief.recommendedAsk}`);
+  lines.push(`**Anchor:** ${brief.anchorPoint}`);
+  lines.push(`**Walk Away:** ${brief.walkAwayNumber}`);
+  lines.push('');
+  lines.push('## Why These Numbers');
+  lines.push(brief.reasoning || '');
+  lines.push('');
+  lines.push('## What to Say');
+  lines.push('');
+  lines.push('**When asked "What are your salary expectations?"**');
+  lines.push(ns.openingLine || '');
+  lines.push('');
+  lines.push('**When they counter below your ask:**');
+  lines.push(ns.counterOffer || '');
+  lines.push('');
+  lines.push('**To close or defer:**');
+  lines.push(ns.closingLine || '');
+  lines.push('');
+  lines.push('## Equity');
+  lines.push(brief.equityNote || '');
+  lines.push('');
+  lines.push('## Also Negotiate');
+  (brief.benefitsToNegotiate || []).forEach(b => lines.push(`- ${b}`));
+  lines.push('');
+  lines.push('## Red Lines');
+  (brief.redLines || []).forEach(r => lines.push(`- ${r}`));
+  lines.push('');
+  lines.push('## Market Context');
+  lines.push(brief.marketContext || '');
+
+  return lines.join('\n');
+}
+
+function saveSalaryBrief(applicationFolder, brief, role, company) {
+  if (!fs.existsSync(applicationFolder)) {
+    throw new Error(`Application folder not found: ${applicationFolder}`);
+  }
+  const md = buildSalaryBriefMd(role, company, brief);
+  fs.writeFileSync(path.join(applicationFolder, 'salary-brief.md'), md, 'utf8');
+  fs.writeFileSync(path.join(applicationFolder, 'salary-brief.json'), JSON.stringify(brief, null, 2), 'utf8');
+}
+
+module.exports = { saveApplicationPackage, saveInterviewBrief, saveSalaryBrief };
