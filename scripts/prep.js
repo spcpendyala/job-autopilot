@@ -2,10 +2,11 @@ require('dotenv').config();
 
 const fs = require('fs');
 const path = require('path');
-const { initDB, getAllApplications, updateApplicationStatus } = require('../services/db');
+const { initDB, getAllApplications, updateApplicationStatus, updateDriveUrl } = require('../services/db');
 const { generateInterviewBrief } = require('../agents/interview-prep');
 const { researchSalary } = require('../agents/salary-researcher');
 const { saveInterviewBrief, saveSalaryBrief } = require('../services/output-writer');
+const { syncApplicationToDrive, uploadNewFilesToDrive } = require('../services/drive');
 
 const OUTPUTS_DIR = path.join(__dirname, '..', 'outputs');
 
@@ -80,6 +81,22 @@ async function main() {
   const salaryBrief = await researchSalary(app.role, app.company, null);
   saveSalaryBrief(folder, salaryBrief, app.role, app.company);
   console.log('💰 Salary brief saved.');
+
+  // Drive sync — upload new files to existing folder, or full sync if no Drive URL yet
+  console.log('☁️  Syncing to Google Drive...');
+  if (app.drive_folder_url) {
+    const folderId = app.drive_folder_url.split('/').pop();
+    await uploadNewFilesToDrive(folder, folderId, ['interview-prep.md', 'salary-brief.md']);
+    console.log(`✅ Drive updated: ${app.drive_folder_url}`);
+  } else {
+    const driveResult = await syncApplicationToDrive(folder, app.company, app.role);
+    if (driveResult) {
+      updateDriveUrl(app.id, driveResult.folderUrl);
+      console.log(`✅ Drive folder: ${driveResult.folderUrl}`);
+    } else {
+      console.log('⏭  Drive sync skipped.');
+    }
+  }
 
   const questionCount = (brief.likelyQuestions || []).length;
   const themes = (brief.keyThemesToEmphasize || []).slice(0, 3).join(', ');

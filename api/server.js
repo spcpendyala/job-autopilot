@@ -4,8 +4,24 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const Database = require('better-sqlite3');
 
-const { initDB, isDuplicate, saveApplication, getAllApplications, updateApplicationStatus, getStats } = require('../services/db');
+const { initDB, isDuplicate, saveApplication, getAllApplications, updateApplicationStatus, updateDriveUrl, getStats } = require('../services/db');
+
+const CONFIG_PATH = path.join(__dirname, '..', 'core', 'config.json');
+const DB_PATH = path.join(__dirname, '..', 'data', 'autopilot.db');
+
+function readConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { return {}; }
+}
+
+function writeConfig(data) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2));
+}
+
+let morningBriefCache = null;
+let morningBriefCachedAt = null;
+const { syncApplicationToDrive } = require('../services/drive');
 const { fetchJobDescription } = require('../services/fetcher');
 const { scoreJobFit } = require('../agents/fit-scorer');
 const { scanATSGaps } = require('../agents/ats-scanner');
@@ -178,6 +194,23 @@ app.post('/api/prep/:id', async (req, res) => {
   res.json({ success: true, briefPath: path.join(folder, 'interview-prep.md') });
 });
 
+app.post('/api/sync-drive/:id', async (req, res) => {
+  const apps = getAllApplications();
+  const found = apps.find(a => a.id === req.params.id);
+  if (!found) return res.status(404).json({ error: 'Not found' });
+
+  const folder = findOutputsFolder(found.company, found.role);
+  if (!folder) return res.status(400).json({ error: 'No outputs folder found.' });
+
+  const driveResult = await syncApplicationToDrive(folder, found.company, found.role);
+  if (!driveResult) return res.json({ success: false, message: 'Drive sync skipped — check DRIVE_FOLDER_ID and authentication.' });
+
+  updateDriveUrl(found.id, driveResult.folderUrl);
+  await updateSheetStatus(found.id, found.status, null, driveResult.folderUrl).catch(() => {});
+
+  res.json({ success: true, folderUrl: driveResult.folderUrl });
+});
+
 app.post('/api/salary', async (req, res) => {
   const { role, company, location, applicationId } = req.body;
   if (!role || !company) throw new Error('role and company are required');
@@ -194,6 +227,125 @@ app.post('/api/salary', async (req, res) => {
   }
 
   res.json(salaryBrief);
+});
+
+// --- Phase 10 endpoints ---
+
+app.get('/api/setup-status', (req, res) => {
+  const profileName = process.env.ACTIVE_PROFILE || 'sai';
+  const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${profileName}.json`);
+  const tokenPath = path.join(__dirname, '..', 'core', 'google-token.json');
+  const config = readConfig();
+
+  const checks = {
+    profile: fs.existsSync(profilePath),
+    anthropicKey: !!process.env.ANTHROPIC_API_KEY,
+    googleConnected: fs.existsSync(tokenPath),
+    driveConfigured: !!process.env.DRIVE_FOLDER_ID,
+    rssFeeds: (config.rssFeeds || []).length > 0,
+    watchedCompanies: (config.watchedCompanies || []).length > 0,
+  };
+
+  res.json({ complete: checks.profile && checks.anthropicKey, checks });
+});
+
+app.get('/api/morning-brief', (req, res) => {
+  const force = req.query.refresh === 'true';
+  const thirtyMin = 30 * 60 * 1000;
+
+  if (!force && morningBriefCache && morningBriefCachedAt > Date.now() - thirtyMin) {
+    return res.json(morningBriefCache);
+  }
+
+  const apps = getAllApplications();
+  const stats = getStats();
+  const config = readConfig();
+
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const newJobs = apps
+    .filter(a => a.status === 'discovered' && a.created_at > oneDayAgo)
+    .map(a => ({
+      id: a.id, company: a.company, role: a.role, fitScore: a.fit_score,
+      verdict: a.verdict, jobUrl: a.job_url,
+      scoreDetails: a.raw_score_json ? JSON.parse(a.raw_score_json) : null,
+    }));
+
+  const followUpDays = config.followUpDays || 5;
+  const cutoff = new Date(Date.now() - followUpDays * 24 * 60 * 60 * 1000).toISOString();
+  const followUpsDue = apps
+    .filter(a => a.status === 'applied' && a.applied_at && a.applied_at <= cutoff)
+    .map(a => ({
+      id: a.id, company: a.company, role: a.role, appliedAt: a.applied_at,
+      daysSinceApplied: Math.floor((Date.now() - new Date(a.applied_at).getTime()) / 86400000),
+    }));
+
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const newResponses = apps
+    .filter(a => ['responded', 'interview', 'rejected', 'offer'].includes(a.status) && a.created_at > twoDaysAgo)
+    .map(a => ({ id: a.id, company: a.company, role: a.role, status: a.status }));
+
+  const total = stats.total || 0;
+  const responseRate = total > 0 ? Math.round(((stats.responded || 0) / total) * 100) : 0;
+
+  morningBriefCache = {
+    date: new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
+    newJobs, followUpsDue, newResponses,
+    stats: { total, applied: stats.applied || 0, responded: stats.responded || 0, interviews: stats.interviews || 0, rejections: stats.rejections || 0, responseRate },
+  };
+  morningBriefCachedAt = Date.now();
+  res.json(morningBriefCache);
+});
+
+app.get('/api/profile', (req, res) => {
+  const profileName = process.env.ACTIVE_PROFILE || 'sai';
+  const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${profileName}.json`);
+  if (!fs.existsSync(profilePath)) return res.json({});
+  res.json(JSON.parse(fs.readFileSync(profilePath, 'utf8')));
+});
+
+app.post('/api/profile', (req, res) => {
+  const profileName = process.env.ACTIVE_PROFILE || 'sai';
+  const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${profileName}.json`);
+  const current = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};
+  fs.writeFileSync(profilePath, JSON.stringify({ ...current, ...req.body }, null, 2));
+  res.json({ success: true });
+});
+
+app.get('/api/config', (req, res) => {
+  res.json(readConfig());
+});
+
+app.post('/api/config', (req, res) => {
+  const updated = { ...readConfig(), ...req.body };
+  delete updated.morningBriefCache;
+  writeConfig(updated);
+  res.json({ success: true });
+});
+
+app.post('/api/discover', (req, res) => {
+  const apps = getAllApplications();
+  const discovered = apps
+    .filter(a => a.status === 'discovered')
+    .map(a => ({ id: a.id, title: a.role, url: a.job_url, company: a.company, fitScore: a.fit_score }));
+  res.json({ discovered });
+});
+
+app.post('/api/applications/:id/mark-applied', (req, res) => {
+  const apps = getAllApplications();
+  const found = apps.find(a => a.id === req.params.id);
+  if (!found) return res.status(404).json({ error: 'Not found' });
+  updateApplicationStatus(req.params.id, 'applied');
+  res.json({ success: true });
+});
+
+app.delete('/api/applications/:id', (req, res) => {
+  const tmpDb = new Database(DB_PATH);
+  try {
+    tmpDb.prepare('DELETE FROM applications WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } finally {
+    tmpDb.close();
+  }
 });
 
 // Global error handler — never sends HTML

@@ -53,9 +53,9 @@ function saveApplication(data) {
 
   db.prepare(`
     INSERT INTO applications
-      (id, url_hash, company, role, job_url, fit_score, verdict, apply_recommendation, raw_score_json)
+      (id, url_hash, company, role, job_url, fit_score, verdict, apply_recommendation, raw_score_json, drive_folder_url)
     VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     urlHash,
@@ -65,7 +65,8 @@ function saveApplication(data) {
     data.fit_score,
     data.verdict,
     data.apply_recommendation ? 1 : 0,
-    data.raw_score_json
+    data.raw_score_json,
+    data.drive_folder_url || null
   );
 }
 
@@ -90,6 +91,11 @@ function updateApplicationStatus(id, status) {
   db.prepare('UPDATE applications SET status = ? WHERE id = ?').run(status, id);
 }
 
+function updateDriveUrl(id, driveUrl) {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  db.prepare('UPDATE applications SET drive_folder_url = ? WHERE id = ?').run(driveUrl, id);
+}
+
 function getStats() {
   if (!db) throw new Error('DB not initialized. Call initDB() first.');
   return db.prepare(`
@@ -104,4 +110,4 @@ function getStats() {
   `).get();
 }
 
-module.exports = { initDB, isDuplicate, saveApplication, getAllApplications, getApplicationsDueFollowUp, updateApplicationStatus, getStats };
+module.exports = { initDB, isDuplicate, saveApplication, getAllApplications, getApplicationsDueFollowUp, updateApplicationStatus, updateDriveUrl, getStats };

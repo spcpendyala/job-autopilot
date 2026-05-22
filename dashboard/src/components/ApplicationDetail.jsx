@@ -7,18 +7,16 @@ const DOC_TABS = [
   { id: 'score', label: 'Score' },
   { id: 'resume', label: 'Resume' },
   { id: 'coverletter', label: 'Cover Letter' },
-  { id: 'companybrief', label: 'Company Brief' },
+  { id: 'companybrief', label: 'Company' },
   { id: 'interviewprep', label: 'Interview Prep' },
   { id: 'salary', label: 'Salary' },
+  { id: 'actions', label: 'Actions' },
 ]
 
 function ScriptCard({ label, text }) {
   const [copied, setCopied] = useState(false)
   const copy = () => {
-    navigator.clipboard.writeText(text || '').then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
+    navigator.clipboard.writeText(text || '').then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
   }
   return (
     <div style={{ background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, padding: '14px 16px', marginBottom: 10 }}>
@@ -33,45 +31,71 @@ function ScriptCard({ label, text }) {
   )
 }
 
+function CopyButton({ text, label }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(text || '').then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
+  }
+  return (
+    <button onClick={copy} className="btn btn-ghost btn-sm" disabled={!text} style={{ opacity: text ? 1 : 0.4 }}>
+      {copied ? '✓ Copied' : label || 'Copy'}
+    </button>
+  )
+}
+
 function statusStyle(status) {
   const map = {
-    discovered:           { bg: '#2a2a2a', color: '#888' },
-    applied:              { bg: '#1e3a5f', color: '#3b82f6' },
-    responded:            { bg: '#3d2e00', color: '#eab308' },
-    interview:            { bg: '#14332a', color: '#22c55e' },
-    'interview-prep-ready': { bg: '#14332a', color: '#22c55e' },
-    rejected:             { bg: '#3d1515', color: '#ef4444' },
-    offer:                { bg: '#2d1a5e', color: '#a855f7' },
+    discovered:              { bg: '#2a2a2a', color: '#888' },
+    applied:                 { bg: '#1e3a5f', color: '#3b82f6' },
+    responded:               { bg: '#3d2e00', color: '#eab308' },
+    interview:               { bg: '#14332a', color: '#22c55e' },
+    'interview-prep-ready':  { bg: '#14332a', color: '#22c55e' },
+    rejected:                { bg: '#3d1515', color: '#ef4444' },
+    offer:                   { bg: '#2d1a5e', color: '#a855f7' },
   }
   return map[status] || { bg: '#2a2a2a', color: '#888' }
 }
 
-export default function ApplicationDetail({ appId, onClose }) {
+export default function ApplicationDetail({ appId, onClose, addToast }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('score')
   const [status, setStatus] = useState('')
   const [prepLoading, setPrepLoading] = useState(false)
   const [prepError, setPrepError] = useState(null)
+  const [driveUrl, setDriveUrl] = useState(null)
+  const [driveSyncing, setDriveSyncing] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const load = () => {
     setLoading(true)
     fetch(`/api/applications/${appId}`)
       .then(r => r.json())
-      .then(d => { setData(d); setStatus(d.status || 'discovered'); setLoading(false) })
+      .then(d => { setData(d); setStatus(d.status || 'discovered'); setDriveUrl(d.drive_folder_url || null); setLoading(false) })
       .catch(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [appId])
 
-  const handleStatusChange = async (e) => {
-    const newStatus = e.target.value
+  const handleStatusChange = async (newStatus) => {
     setStatus(newStatus)
     await fetch(`/api/applications/${appId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
     })
+    addToast && addToast(`Status updated to "${newStatus}"`, 'success')
+  }
+
+  const handleSyncDrive = async () => {
+    setDriveSyncing(true)
+    try {
+      const r = await fetch(`/api/sync-drive/${appId}`, { method: 'POST' })
+      const d = await r.json()
+      if (d.folderUrl) setDriveUrl(d.folderUrl)
+    } catch { /* ignore */ } finally {
+      setDriveSyncing(false)
+    }
   }
 
   const handleGeneratePrep = async () => {
@@ -83,10 +107,21 @@ export default function ApplicationDetail({ appId, onClose }) {
       if (!d.success) throw new Error(d.error || 'Failed')
       load()
       setActiveTab('interviewprep')
+      addToast && addToast('Interview prep ready!', 'success')
     } catch (err) {
       setPrepError(err.message)
     } finally {
       setPrepLoading(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    try {
+      await fetch(`/api/applications/${appId}`, { method: 'DELETE' })
+      addToast && addToast('Removed from tracker.', 'success')
+      onClose()
+    } catch {
+      addToast && addToast('Failed to remove.', 'error')
     }
   }
 
@@ -109,38 +144,45 @@ export default function ApplicationDetail({ appId, onClose }) {
         return scoreDetails
           ? <FitScoreDisplay fitScore={scoreDetails} atsGaps={null} />
           : <div className="empty">No score data available.</div>
+
       case 'resume':
         return files.resume
           ? <pre className="doc-pre">{files.resume}</pre>
-          : <div className="empty">No resume generated yet. Run apply --full to generate docs.</div>
+          : <div className="empty">No resume generated yet. Use "Find a Job" → Generate Full Package.</div>
+
       case 'coverletter':
         return files.coverLetter
           ? <pre className="doc-pre">{files.coverLetter}</pre>
           : <div className="empty">No cover letter generated yet.</div>
+
       case 'companybrief':
         if (!files.companyBrief) return <div className="empty">No company brief generated yet.</div>
         try {
-          const parsed = JSON.parse(files.companyBrief)
-          return <pre className="doc-pre">{JSON.stringify(parsed, null, 2)}</pre>
+          return <pre className="doc-pre">{JSON.stringify(JSON.parse(files.companyBrief), null, 2)}</pre>
         } catch {
           return <pre className="doc-pre">{files.companyBrief}</pre>
         }
+
       case 'interviewprep':
         if (files.interviewPrep) return <pre className="doc-pre">{files.interviewPrep}</pre>
         return (
           <div style={{ textAlign: 'center', padding: 48 }}>
-            <div style={{ color: '#888', marginBottom: 20 }}>No interview prep generated yet.</div>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>🎯</div>
+            <div style={{ color: '#888', marginBottom: 8 }}>No interview prep generated yet.</div>
+            <div style={{ color: '#555', fontSize: 13, marginBottom: 24 }}>Generates STAR answers, questions to ask, and a company overview.</div>
             {prepError && <div className="error-msg">{prepError}</div>}
             <button className="btn btn-blue" onClick={handleGeneratePrep} disabled={prepLoading}>
               {prepLoading ? <span className="spinner" /> : '🎯 Generate Interview Prep'}
             </button>
           </div>
         )
+
       case 'salary': {
         if (!files.salaryBrief) return (
           <div style={{ textAlign: 'center', padding: 48 }}>
-            <div style={{ color: '#888', marginBottom: 12 }}>No salary brief generated yet.</div>
-            <div style={{ color: '#666', fontSize: 13 }}>Run <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4 }}>npm run prep {data.id}</code> to generate.</div>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>💰</div>
+            <div style={{ color: '#888', marginBottom: 12 }}>No salary research done yet.</div>
+            <div style={{ color: '#555', fontSize: 13 }}>Run <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4 }}>npm run prep {data.id}</code> to generate.</div>
           </div>
         )
         let sb
@@ -149,7 +191,7 @@ export default function ApplicationDetail({ appId, onClose }) {
         const ns = sb.negotiationScript || {}
         return (
           <div style={{ padding: '4px 0' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+            <div className="salary-range-grid">
               <div style={{ background: '#3d1515', border: '1px solid #ef4444', borderRadius: 8, padding: 16, textAlign: 'center' }}>
                 <div style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>LOW</div>
                 <div style={{ color: '#ef4444', fontSize: 20, fontWeight: 700 }}>{mr.low}</div>
@@ -163,50 +205,118 @@ export default function ApplicationDetail({ appId, onClose }) {
                 <div style={{ color: '#22c55e', fontSize: 20, fontWeight: 700 }}>{mr.high}</div>
               </div>
             </div>
-
             <div style={{ background: '#0d1f3c', border: '1px solid #3b82f6', borderRadius: 8, padding: 20, textAlign: 'center', marginBottom: 20 }}>
               <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>YOUR ASK</div>
               <div style={{ color: '#3b82f6', fontSize: 34, fontWeight: 700 }}>{sb.recommendedAsk}</div>
               <div style={{ color: '#666', fontSize: 12, marginTop: 8 }}>Anchor: {sb.anchorPoint} · Walk Away: {sb.walkAwayNumber}</div>
             </div>
-
             {sb.reasoning && (
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>Why These Numbers</div>
                 <div style={{ color: '#888', fontSize: 13, lineHeight: 1.6 }}>{sb.reasoning}</div>
               </div>
             )}
-
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>What to Say</div>
               <ScriptCard label='When asked "What are your salary expectations?"' text={ns.openingLine} />
               <ScriptCard label="When they counter below your ask" text={ns.counterOffer} />
               <ScriptCard label="To close or defer" text={ns.closingLine} />
             </div>
-
             {(sb.benefitsToNegotiate || []).length > 0 && (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>Also Negotiate</div>
-                <div style={{ background: '#1a1a1a', borderRadius: 8, padding: '4px 16px' }}>
-                  {sb.benefitsToNegotiate.map((b, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: i < sb.benefitsToNegotiate.length - 1 ? '1px solid #2a2a2a' : 'none' }}>
-                      <span style={{ color: '#22c55e', fontSize: 16 }}>☐</span>
-                      <span style={{ color: '#d0d0d0', fontSize: 13 }}>{b}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {sb.marketContext && (
               <div>
-                <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>Market Context</div>
-                <div style={{ color: '#888', fontSize: 13, lineHeight: 1.6 }}>{sb.marketContext}</div>
+                <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>Also Negotiate</div>
+                {sb.benefitsToNegotiate.map((b, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid #2a2a2a', color: '#d0d0d0', fontSize: 13 }}>
+                    <span style={{ color: '#22c55e' }}>☐</span>{b}
+                  </div>
+                ))}
               </div>
             )}
           </div>
         )
       }
+
+      case 'actions':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            <div>
+              <div style={{ color: '#888', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Change Status</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {STATUS_OPTIONS.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => handleStatusChange(s)}
+                    style={{
+                      background: status === s ? '#22c55e' : '#1a1a1a',
+                      border: `1px solid ${status === s ? '#22c55e' : '#2a2a2a'}`,
+                      borderRadius: 6,
+                      color: status === s ? '#000' : '#888',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      fontWeight: status === s ? 700 : 400,
+                      padding: '6px 12px',
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: '#888', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Links</div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {data.job_url && data.job_url.startsWith('http') && (
+                  <a href={data.job_url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
+                    🔗 Open Job URL
+                  </a>
+                )}
+                {driveUrl ? (
+                  <a href={driveUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
+                    ☁️ Open in Drive
+                  </a>
+                ) : (
+                  <button onClick={handleSyncDrive} disabled={driveSyncing} className="btn btn-ghost btn-sm">
+                    {driveSyncing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '☁️ Sync to Drive'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ color: '#888', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Documents</div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <CopyButton text={files.resume} label="Copy Resume" />
+                <CopyButton text={files.coverLetter} label="Copy Cover Letter" />
+                {!files.interviewPrep && (
+                  <button onClick={handleGeneratePrep} disabled={prepLoading} className="btn btn-blue btn-sm">
+                    {prepLoading ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🎯 Generate Interview Prep'}
+                  </button>
+                )}
+              </div>
+              {prepError && <div className="error-msg" style={{ marginTop: 12 }}>{prepError}</div>}
+            </div>
+
+            <div style={{ borderTop: '1px solid #2a2a2a', paddingTop: 20 }}>
+              <div style={{ color: '#888', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Danger Zone</div>
+              {!confirmDelete ? (
+                <button onClick={() => setConfirmDelete(true)} className="btn-ghost" style={{ background: 'none', border: '1px solid #3d1515', borderRadius: 8, color: '#ef4444', cursor: 'pointer', fontSize: 13, padding: '8px 16px' }}>
+                  Remove from Tracker
+                </button>
+              ) : (
+                <div style={{ background: '#3d1515', border: '1px solid #ef4444', borderRadius: 8, padding: 16 }}>
+                  <div style={{ color: '#ef4444', fontWeight: 600, marginBottom: 8 }}>Are you sure?</div>
+                  <div style={{ color: '#888', fontSize: 13, marginBottom: 12 }}>This will permanently delete this application from your tracker.</div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button onClick={() => setConfirmDelete(false)} className="btn btn-ghost btn-sm">Cancel</button>
+                    <button onClick={handleDelete} className="btn btn-red btn-sm">Yes, Remove It</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+
       default:
         return null
     }
@@ -219,18 +329,13 @@ export default function ApplicationDetail({ appId, onClose }) {
           <div style={{ flex: 1 }}>
             <div className="modal-title">{data.company}</div>
             <div className="modal-subtitle">{data.role}</div>
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-              <span style={{ background: st.bg, color: st.color, borderRadius: 100, fontSize: 11, fontWeight: 600, padding: '3px 10px' }}>
-                {status}
-              </span>
-              {data.fit_score && (
-                <span style={{ color: data.fit_score >= 8 ? '#22c55e' : data.fit_score >= 6 ? '#eab308' : '#ef4444', fontWeight: 700, fontSize: 16 }}>
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ background: st.bg, color: st.color, borderRadius: 100, fontSize: 11, fontWeight: 600, padding: '3px 10px' }}>{status}</span>
+              {data.fit_score != null && (
+                <span style={{ color: data.fit_score >= 8 ? '#22c55e' : data.fit_score >= 6 ? '#eab308' : '#ef4444', fontWeight: 700, fontSize: 15 }}>
                   {data.fit_score}/10
                 </span>
               )}
-              <select className="form-select" value={status} onChange={handleStatusChange} style={{ width: 'auto', padding: '4px 8px', fontSize: 12 }}>
-                {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
             </div>
           </div>
           <button className="modal-close" onClick={onClose}>×</button>

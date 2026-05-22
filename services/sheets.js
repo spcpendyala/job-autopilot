@@ -34,7 +34,7 @@ async function syncToSheets(applicationData) {
   }
 }
 
-async function updateSheetStatus(jobId, status, notes) {
+async function updateSheetStatus(jobId, status, notes, driveUrl) {
   const spreadsheetId = getSheetId();
   if (!spreadsheetId) return;
 
@@ -54,16 +54,16 @@ async function updateSheetStatus(jobId, status, notes) {
     const sheetRow = rowIndex + 1;
     const responseDate = new Date().toISOString().slice(0, 10);
 
+    const updateData = [
+      { range: `${SHEET_NAME}!F${sheetRow}`, values: [[status]] },
+      { range: `${SHEET_NAME}!J${sheetRow}`, values: [[responseDate]] },
+      { range: `${SHEET_NAME}!K${sheetRow}`, values: [[notes || '']] },
+    ];
+    if (driveUrl) updateData.push({ range: `${SHEET_NAME}!I${sheetRow}`, values: [[driveUrl]] });
+
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
-      requestBody: {
-        valueInputOption: 'RAW',
-        data: [
-          { range: `${SHEET_NAME}!F${sheetRow}`, values: [[status]] },
-          { range: `${SHEET_NAME}!J${sheetRow}`, values: [[responseDate]] },
-          { range: `${SHEET_NAME}!K${sheetRow}`, values: [[notes || '']] },
-        ],
-      },
+      requestBody: { valueInputOption: 'RAW', data: updateData },
     });
   } catch (err) {
     console.error('Sheets updateSheetStatus error:', err.message);

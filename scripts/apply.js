@@ -1,6 +1,7 @@
 require('dotenv').config();
 
-const { initDB, isDuplicate, saveApplication } = require('../services/db');
+const { initDB, isDuplicate, saveApplication, updateDriveUrl } = require('../services/db');
+const { syncApplicationToDrive } = require('../services/drive');
 const { fetchJobDescription } = require('../services/fetcher');
 const { scoreJobFit } = require('../agents/fit-scorer');
 const { scanATSGaps } = require('../agents/ats-scanner');
@@ -74,6 +75,7 @@ async function main() {
   }
 
   initDB();
+  let driveFolderUrl = null;
 
   if (!pasteMode && isDuplicate(url)) {
     console.log('Already processed. Skipping.');
@@ -122,6 +124,15 @@ async function main() {
     console.log(`\n✅ Package saved to: ${folderPath}`);
     console.log('📁 Files: resume.md, cover-letter.md, job-description.md, company-brief.json, other-roles.md, score-report.md');
 
+    console.log('☁️  Syncing to Google Drive...');
+    const driveResult = await syncApplicationToDrive(folderPath, company, role);
+    if (driveResult) {
+      driveFolderUrl = driveResult.folderUrl;
+      console.log(`✅ Drive folder: ${driveFolderUrl}`);
+    } else {
+      console.log('⏭  Drive sync skipped.');
+    }
+
     const roles = otherRoles?.otherRoles || [];
     if (roles.length > 0) {
       console.log(`\n🔍 Other open roles at ${company || 'company'}:`);
@@ -137,6 +148,7 @@ async function main() {
     verdict: fitResult.verdict,
     apply_recommendation: fitResult.applyRecommendation,
     raw_score_json: JSON.stringify(fitResult),
+    drive_folder_url: driveFolderUrl,
   });
 
   console.log('\nSaved to database.');
