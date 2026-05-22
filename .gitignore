@@ -1,0 +1,7 @@
+.env
+core/google-token.json
+core/profiles/*.json
+data/
+outputs/
+node_modules/
+.DS_Store

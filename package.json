@@ -1,0 +1,38 @@
+{
+  "name": "job-autopilot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "apply": "node scripts/apply.js",
+    "discover": "node scripts/discover.js",
+    "full": "node scripts/apply.js --full",
+    "prep": "node scripts/prep.js",
+    "scan": "node scripts/daily-scan.js",
+    "setup-google": "node scripts/setup-google.js",
+    "start": "node api/server.js",
+    "dev": "concurrently \"node api/server.js\" \"vite --config dashboard/vite.config.js\"",
+    "dashboard": "vite --config dashboard/vite.config.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
+    "axios": "^1.16.1",
+    "better-sqlite3": "^12.10.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "googleapis": "^172.0.0",
+    "node-cron": "^4.2.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^9.2.1",
+    "vite": "^8.0.14"
+  }
+}
