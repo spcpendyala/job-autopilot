@@ -1,13 +1,15 @@
-export default function Sidebar({ activePage, setActivePage, morningBrief }) {
+export default function Sidebar({ activePage, setActivePage, morningBrief, pendingApprovals }) {
   const navItems = [
-    { id: 'home', icon: '🌅', label: 'Morning Brief' },
+    { id: 'home',     icon: '🌅', label: 'Morning Brief' },
+    { id: 'approval', icon: '⏳', label: 'Review Queue',  badge: pendingApprovals },
     { id: 'pipeline', icon: '📋', label: 'Pipeline' },
-    { id: 'find', icon: '🔍', label: 'Find a Job' },
+    { id: 'outreach', icon: '📨', label: 'Outreach' },
+    { id: 'find',     icon: '🔍', label: 'Find a Job' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
   ]
 
   const stats = morningBrief?.stats
-  const appliedThisWeek = stats?.applied || 0
+  const applied = stats?.applied || 0
 
   return (
     <aside className="sidebar">
@@ -16,7 +18,7 @@ export default function Sidebar({ activePage, setActivePage, morningBrief }) {
           <span className="sidebar-logo-icon">🚀</span>
           <div>
             <div className="sidebar-logo-name">Job AutoPilot</div>
-            <div className="sidebar-logo-sub">Your AI job search co-pilot</div>
+            <div className="sidebar-logo-sub">AI job search co-pilot</div>
           </div>
         </div>
 
@@ -28,15 +30,16 @@ export default function Sidebar({ activePage, setActivePage, morningBrief }) {
               onClick={() => setActivePage(item.id)}
             >
               <span className="nav-icon">{item.icon}</span>
-              <span>{item.label}</span>
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
             </button>
           ))}
         </nav>
       </div>
 
       <div className="sidebar-bottom">
-        <span>{appliedThisWeek} applied total</span>
-        <span>v1.0</span>
+        <span>{applied} applied</span>
+        <span style={{ color: 'var(--text-3)' }}>v1.0</span>
       </div>
     </aside>
   )

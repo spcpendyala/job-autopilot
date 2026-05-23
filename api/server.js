@@ -5,11 +5,23 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const session = require('express-session');
+const SQLiteStore = require('connect-sqlite3')(session);
+const cookieParser = require('cookie-parser');
+const passport = require('../services/auth');
 
-const { initDB, isDuplicate, saveApplication, getAllApplications, updateApplicationStatus, updateDriveUrl, getStats } = require('../services/db');
+const {
+  initDB, isDuplicate, saveApplication, getAllApplications, updateApplicationStatus, updateDriveUrl, getStats,
+  getProfileStatus, setProfileStatus, saveUploadedResume, markResumesProcessed,
+  addToApprovalQueue, getApprovalQueue, updateApprovalStatus,
+  addToApplyQueue, getApplyQueue, markApplied, setApplicationApplied, getApprovalStats,
+  saveOutreach, getOutreach, updateOutreachStatus, getOutreachStats,
+} = require('../services/db');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'core', 'config.json');
 const DB_PATH = path.join(__dirname, '..', 'data', 'autopilot.db');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+const ADMIN_ID = process.env.ADMIN_USER_ID || '';
 
 function readConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { return {}; }
@@ -19,8 +31,28 @@ function writeConfig(data) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2));
 }
 
-let morningBriefCache = null;
-let morningBriefCachedAt = null;
+function getProfilePath(userId) {
+  if (process.env.MULTI_USER === 'true' && userId !== 'default') {
+    return path.join(__dirname, '..', 'core', 'profiles', 'users', userId, 'profile.json');
+  }
+  return path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
+}
+
+function getResumePath(userId) {
+  if (process.env.MULTI_USER === 'true' && userId !== 'default') {
+    return path.join(__dirname, '..', 'core', 'profiles', 'users', userId, 'base-resume.md');
+  }
+  return path.join(__dirname, '..', 'core', 'base-resume.md');
+}
+
+// Per-user morning brief cache
+const morningBriefCacheStore = {};
+
+const multer = require('multer');
+const { parseResume } = require('../services/resume-parser');
+const { synthesizeProfile } = require('../agents/profile-synthesizer');
+const { findRecruiter } = require('../agents/recruiter-finder');
+const { draftOutreach } = require('../agents/outreach-drafter');
 const { syncApplicationToDrive } = require('../services/drive');
 const { fetchJobDescription } = require('../services/fetcher');
 const { scoreJobFit } = require('../agents/fit-scorer');
@@ -53,16 +85,83 @@ function readFile(filepath) {
 
 initDB();
 
+const upload = multer({
+  dest: 'uploads/resumes/',
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+    ];
+    cb(null, allowed.includes(file.mimetype) || file.originalname.endsWith('.pdf') || file.originalname.endsWith('.docx') || file.originalname.endsWith('.txt'));
+  },
+});
+
 const app = express();
 
-app.use(cors());
+app.use(cors({ credentials: true, origin: true }));
 app.use(express.json({ limit: '100kb' }));
+app.use(cookieParser());
+
+// Ensure data dir exists for session store
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+app.use(session({
+  store: new SQLiteStore({ db: 'sessions.sqlite', dir: DATA_DIR }),
+  secret: process.env.SESSION_SECRET || 'job-autopilot-secret-change-in-prod',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 }, // 30 days
+}));
+app.use(passport.initialize());
+app.use(passport.session());
 
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => console.log(`[${req.method}] ${req.path} — ${Date.now() - start}ms`));
   next();
 });
+
+// Auth middleware — attaches userId to req
+const requireAuth = (req, res, next) => {
+  if (req.isAuthenticated()) {
+    req.userId = req.user.id;
+    return next();
+  }
+  // Single-user mode: no auth required
+  if (process.env.MULTI_USER !== 'true') {
+    req.userId = 'default';
+    return next();
+  }
+  res.status(401).json({ error: 'Not authenticated', loginUrl: '/auth/google' });
+};
+
+// --- Auth routes (no requireAuth needed) ---
+
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: '/?auth=failed' }),
+  (req, res) => res.redirect('/?auth=success')
+);
+
+app.get('/auth/logout', (req, res) => {
+  req.logout(() => res.redirect('/'));
+});
+
+app.get('/auth/me', (req, res) => {
+  if (req.isAuthenticated()) {
+    return res.json({ user: req.user, userId: req.user.id });
+  }
+  if (process.env.MULTI_USER !== 'true') {
+    return res.json({ user: null, userId: 'default' });
+  }
+  res.status(401).json({ error: 'Not authenticated', loginUrl: '/auth/google' });
+});
+
+// --- All /api/* routes require auth ---
+app.use('/api', requireAuth);
 
 // --- Routes ---
 
@@ -71,7 +170,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/applications', (req, res) => {
-  const apps = getAllApplications().map(a => ({
+  const apps = getAllApplications(req.userId).map(a => ({
     ...a,
     scoreDetails: a.raw_score_json ? JSON.parse(a.raw_score_json) : null,
   }));
@@ -79,7 +178,7 @@ app.get('/api/applications', (req, res) => {
 });
 
 app.get('/api/applications/:id', (req, res) => {
-  const apps = getAllApplications();
+  const apps = getAllApplications(req.userId);
   const found = apps.find(a => a.id === req.params.id);
   if (!found) return res.status(404).json({ error: 'Not found' });
 
@@ -102,8 +201,8 @@ app.get('/api/applications/:id', (req, res) => {
 });
 
 app.get('/api/stats', (req, res) => {
-  const stats = getStats();
-  const apps = getAllApplications();
+  const stats = getStats(req.userId);
+  const apps = getAllApplications(req.userId);
   const withScores = apps.filter(a => a.fit_score != null);
   const avgFitScore = withScores.length
     ? Math.round(withScores.reduce((s, a) => s + a.fit_score, 0) / withScores.length * 10) / 10
@@ -130,7 +229,7 @@ app.post('/api/apply', async (req, res) => {
   const { jobUrl, jobDescription, jobTitle, company, fitScore, atsGaps, generateDocs } = req.body;
   const url = jobUrl || `paste-${Date.now()}`;
 
-  if (jobUrl && isDuplicate(jobUrl)) {
+  if (jobUrl && isDuplicate(jobUrl, req.userId)) {
     return res.json({ duplicate: true });
   }
 
@@ -150,7 +249,7 @@ app.post('/api/apply', async (req, res) => {
     });
   }
 
-  saveApplication({
+  const appId = saveApplication({
     job_url: url,
     company: company || null,
     role: jobTitle || null,
@@ -158,12 +257,12 @@ app.post('/api/apply', async (req, res) => {
     verdict: fitScore.verdict,
     apply_recommendation: fitScore.applyRecommendation,
     raw_score_json: JSON.stringify(fitScore),
-  });
+  }, req.userId);
 
-  const saved = getAllApplications().find(a => a.job_url === url);
+  const saved = getAllApplications(req.userId).find(a => a.id === appId);
   if (saved) await syncToSheets(saved).catch(() => {});
 
-  res.json({ success: true, applicationId: saved?.id, outputFolder, files: null });
+  res.json({ success: true, applicationId: appId, outputFolder, files: null });
 });
 
 app.patch('/api/applications/:id/status', async (req, res) => {
@@ -174,7 +273,7 @@ app.patch('/api/applications/:id/status', async (req, res) => {
 });
 
 app.post('/api/prep/:id', async (req, res) => {
-  const apps = getAllApplications();
+  const apps = getAllApplications(req.userId);
   const found = apps.find(a => a.id === req.params.id);
   if (!found) return res.status(404).json({ error: 'Not found' });
 
@@ -195,7 +294,7 @@ app.post('/api/prep/:id', async (req, res) => {
 });
 
 app.post('/api/sync-drive/:id', async (req, res) => {
-  const apps = getAllApplications();
+  const apps = getAllApplications(req.userId);
   const found = apps.find(a => a.id === req.params.id);
   if (!found) return res.status(404).json({ error: 'Not found' });
 
@@ -218,7 +317,7 @@ app.post('/api/salary', async (req, res) => {
   const salaryBrief = await researchSalary(role, company, location || null);
 
   if (applicationId) {
-    const apps = getAllApplications();
+    const apps = getAllApplications(req.userId);
     const found = apps.find(a => a.id === applicationId);
     if (found) {
       const folder = findOutputsFolder(found.company, found.role);
@@ -232,8 +331,7 @@ app.post('/api/salary', async (req, res) => {
 // --- Phase 10 endpoints ---
 
 app.get('/api/setup-status', (req, res) => {
-  const profileName = process.env.ACTIVE_PROFILE || 'sai';
-  const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${profileName}.json`);
+  const profilePath = getProfilePath(req.userId);
   const tokenPath = path.join(__dirname, '..', 'core', 'google-token.json');
   const config = readConfig();
 
@@ -244,21 +342,24 @@ app.get('/api/setup-status', (req, res) => {
     driveConfigured: !!process.env.DRIVE_FOLDER_ID,
     rssFeeds: (config.rssFeeds || []).length > 0,
     watchedCompanies: (config.watchedCompanies || []).length > 0,
+    profileApproved: getProfileStatus(req.userId).approved === 'true',
   };
 
   res.json({ complete: checks.profile && checks.anthropicKey, checks });
 });
 
 app.get('/api/morning-brief', (req, res) => {
+  const userId = req.userId;
   const force = req.query.refresh === 'true';
   const thirtyMin = 30 * 60 * 1000;
+  const cached = morningBriefCacheStore[userId];
 
-  if (!force && morningBriefCache && morningBriefCachedAt > Date.now() - thirtyMin) {
-    return res.json(morningBriefCache);
+  if (!force && cached && cached.cachedAt > Date.now() - thirtyMin) {
+    return res.json(cached.data);
   }
 
-  const apps = getAllApplications();
-  const stats = getStats();
+  const apps = getAllApplications(userId);
+  const stats = getStats(userId);
   const config = readConfig();
 
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -287,25 +388,34 @@ app.get('/api/morning-brief', (req, res) => {
   const total = stats.total || 0;
   const responseRate = total > 0 ? Math.round(((stats.responded || 0) / total) * 100) : 0;
 
-  morningBriefCache = {
+  const outreachStats = getOutreachStats(userId);
+  const outreachDue = getOutreach('sent', userId).filter(o => {
+    const days = Math.floor((Date.now() - new Date(o.sent_at)) / 86400000);
+    return days >= 7;
+  });
+
+  const briefData = {
     date: new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
     newJobs, followUpsDue, newResponses,
     stats: { total, applied: stats.applied || 0, responded: stats.responded || 0, interviews: stats.interviews || 0, rejections: stats.rejections || 0, responseRate },
+    outreachStats,
+    outreachDue,
   };
-  morningBriefCachedAt = Date.now();
-  res.json(morningBriefCache);
+
+  morningBriefCacheStore[userId] = { data: briefData, cachedAt: Date.now() };
+  res.json(briefData);
 });
 
 app.get('/api/profile', (req, res) => {
-  const profileName = process.env.ACTIVE_PROFILE || 'sai';
-  const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${profileName}.json`);
+  const profilePath = getProfilePath(req.userId);
   if (!fs.existsSync(profilePath)) return res.json({});
   res.json(JSON.parse(fs.readFileSync(profilePath, 'utf8')));
 });
 
 app.post('/api/profile', (req, res) => {
-  const profileName = process.env.ACTIVE_PROFILE || 'sai';
-  const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${profileName}.json`);
+  const profilePath = getProfilePath(req.userId);
+  const dir = path.dirname(profilePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const current = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};
   fs.writeFileSync(profilePath, JSON.stringify({ ...current, ...req.body }, null, 2));
   res.json({ success: true });
@@ -323,7 +433,7 @@ app.post('/api/config', (req, res) => {
 });
 
 app.post('/api/discover', (req, res) => {
-  const apps = getAllApplications();
+  const apps = getAllApplications(req.userId);
   const discovered = apps
     .filter(a => a.status === 'discovered')
     .map(a => ({ id: a.id, title: a.role, url: a.job_url, company: a.company, fitScore: a.fit_score }));
@@ -331,7 +441,7 @@ app.post('/api/discover', (req, res) => {
 });
 
 app.post('/api/applications/:id/mark-applied', (req, res) => {
-  const apps = getAllApplications();
+  const apps = getAllApplications(req.userId);
   const found = apps.find(a => a.id === req.params.id);
   if (!found) return res.status(404).json({ error: 'Not found' });
   updateApplicationStatus(req.params.id, 'applied');
@@ -341,11 +451,212 @@ app.post('/api/applications/:id/mark-applied', (req, res) => {
 app.delete('/api/applications/:id', (req, res) => {
   const tmpDb = new Database(DB_PATH);
   try {
-    tmpDb.prepare('DELETE FROM applications WHERE id = ?').run(req.params.id);
+    tmpDb.prepare('DELETE FROM applications WHERE id = ? AND user_id = ?').run(req.params.id, req.userId);
     res.json({ success: true });
   } finally {
     tmpDb.close();
   }
+});
+
+// --- Phase 15 endpoints ---
+
+app.post('/api/outreach/find', async (req, res) => {
+  const { company, role } = req.body;
+  if (!company || !role) return res.status(400).json({ error: 'company and role required' });
+  const recruiterInfo = await findRecruiter(company, role);
+  res.json(recruiterInfo);
+});
+
+app.post('/api/outreach/draft', async (req, res) => {
+  const { company, role, recruiterInfo, jobDescription, applicationId } = req.body;
+  if (!company || !role) return res.status(400).json({ error: 'company and role required' });
+
+  const draft = await draftOutreach(company, role, recruiterInfo || {}, jobDescription || '');
+  const id = `OR-${Date.now()}`;
+
+  saveOutreach({
+    id,
+    company,
+    role,
+    contact_name: recruiterInfo?.name || null,
+    contact_title: recruiterInfo?.title || null,
+    contact_email: recruiterInfo?.email || null,
+    contact_linkedin: recruiterInfo?.linkedin || null,
+    draft_message: draft.body,
+    application_id: applicationId || null,
+  }, req.userId);
+
+  res.json({ success: true, outreachId: id, subject: draft.subject, body: draft.body, recruiterInfo: recruiterInfo || {} });
+});
+
+app.get('/api/outreach', (req, res) => {
+  const items = getOutreach(null, req.userId);
+  const stats = getOutreachStats(req.userId);
+  res.json({ items, stats });
+});
+
+app.get('/api/outreach/stats', (req, res) => {
+  const stats = getOutreachStats(req.userId);
+  const draftsPending = getOutreach('draft', req.userId).length;
+  res.json({ ...stats, draftsPending });
+});
+
+app.post('/api/outreach/:id/mark-sent', (req, res) => {
+  updateOutreachStatus(req.params.id, 'sent');
+  res.json({ success: true });
+});
+
+app.post('/api/outreach/:id/mark-replied', (req, res) => {
+  updateOutreachStatus(req.params.id, 'replied');
+  res.json({ success: true });
+});
+
+// --- Phase 13 endpoints ---
+
+app.get('/api/approval-queue', (req, res) => {
+  res.json(getApprovalQueue('pending', req.userId));
+});
+
+app.get('/api/approval-queue/stats', (req, res) => {
+  res.json(getApprovalStats(req.userId));
+});
+
+app.post('/api/approval-queue/:id/approve', (req, res) => {
+  const { resume, coverLetter } = req.body;
+  const userId = req.userId;
+  const allItems = [
+    ...getApprovalQueue('pending', userId),
+    ...getApprovalQueue('approved', userId),
+    ...getApprovalQueue('skipped', userId),
+  ];
+  const item = allItems.find(i => i.id === req.params.id);
+
+  if (!item) return res.status(404).json({ error: 'Not found' });
+
+  updateApprovalStatus(req.params.id, 'approved', resume || null, coverLetter || null);
+
+  addToApplyQueue({
+    id: `AP-${Date.now()}`,
+    approval_id: req.params.id,
+    application_id: item.application_id,
+    company: item.company,
+    role: item.role,
+    job_url: item.job_url,
+    fit_score: item.fit_score,
+    tailored_resume: resume || item.tailored_resume,
+    cover_letter: coverLetter || item.cover_letter,
+  }, userId);
+
+  if (item.application_id) updateApplicationStatus(item.application_id, 'approved');
+
+  res.json({ success: true });
+});
+
+app.post('/api/approval-queue/:id/skip', (req, res) => {
+  updateApprovalStatus(req.params.id, 'skipped');
+  res.json({ success: true });
+});
+
+app.get('/api/apply-queue', (req, res) => {
+  res.json(getApplyQueue('ready', req.userId));
+});
+
+app.post('/api/apply-queue/:id/mark-applied', async (req, res) => {
+  const items = getApplyQueue('ready', req.userId);
+  const item = items.find(i => i.id === req.params.id);
+
+  markApplied(req.params.id);
+
+  if (item && item.application_id) {
+    setApplicationApplied(item.application_id);
+    const apps = getAllApplications(req.userId);
+    const found = apps.find(a => a.id === item.application_id);
+    if (found) await updateSheetStatus(found.id, 'applied', null).catch(() => {});
+  }
+
+  res.json({ success: true });
+});
+
+// --- Phase 12 endpoints ---
+
+app.post('/api/profile/upload', upload.array('resumes', 6), async (req, res) => {
+  const userId = req.userId;
+  const files = req.files || [];
+  if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+  if (files.length > 6) return res.status(400).json({ error: 'Maximum 6 resumes allowed' });
+
+  for (const file of files) {
+    saveUploadedResume(`R-${Date.now()}-${file.originalname}`, file.originalname, userId);
+  }
+
+  const texts = await Promise.all(files.map(f => parseResume(f.path, f.mimetype)));
+  const result = await synthesizeProfile(texts);
+
+  // Ensure user profile directory exists for multi-user mode
+  const profilePath = getProfilePath(userId);
+  const profileDir = path.dirname(profilePath);
+  if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
+
+  // Write profile and base resume to user-specific paths
+  fs.writeFileSync(profilePath, JSON.stringify(result.profile, null, 2));
+  fs.writeFileSync(getResumePath(userId), result.baseResume);
+
+  markResumesProcessed(userId);
+  setProfileStatus('pending_review', 'true', userId);
+  setProfileStatus('approved', 'false', userId);
+
+  res.json({ success: true, profile: result.profile, baseResume: result.baseResume, synthesisNotes: result.synthesisNotes });
+});
+
+app.get('/api/profile/status', (req, res) => {
+  const status = getProfileStatus(req.userId);
+  res.json({ approved: status.approved === 'true', pendingReview: status.pending_review === 'true' });
+});
+
+app.post('/api/profile/approve', (req, res) => {
+  const userId = req.userId;
+  const { profile, baseResume } = req.body;
+  const profilePath = getProfilePath(userId);
+  const resumePath = getResumePath(userId);
+
+  const dir = path.dirname(profilePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  if (profile) fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
+  if (baseResume) fs.writeFileSync(resumePath, baseResume);
+
+  setProfileStatus('approved', 'true', userId);
+  setProfileStatus('pending_review', 'false', userId);
+
+  res.json({ success: true });
+});
+
+app.post('/api/profile/reject', (req, res) => {
+  setProfileStatus('pending_review', 'false', req.userId);
+  setProfileStatus('approved', 'false', req.userId);
+  res.json({ success: true });
+});
+
+// --- Phase 17: Admin endpoint ---
+
+app.get('/api/admin/users', (req, res) => {
+  if (process.env.MULTI_USER === 'true' && req.userId !== ADMIN_ID) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  const usersDir = path.join(__dirname, '..', 'core', 'profiles', 'users');
+  if (!fs.existsSync(usersDir)) return res.json({ users: [] });
+
+  const users = fs.readdirSync(usersDir)
+    .filter(id => fs.existsSync(path.join(usersDir, id, 'config.json')))
+    .map(id => {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(path.join(usersDir, id, 'config.json'), 'utf8'));
+        const stats = getStats(id);
+        return { id, ...cfg, stats };
+      } catch { return { id, error: 'Could not read config' }; }
+    });
+
+  res.json({ users });
 });
 
 // Global error handler — never sends HTML

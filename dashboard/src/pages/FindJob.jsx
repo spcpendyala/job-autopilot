@@ -1,27 +1,42 @@
 import { useState, useEffect } from 'react'
-import FitScoreDisplay from '../components/FitScoreDisplay'
 
 const STEPS = [
   { label: 'Input', desc: 'Paste a job URL or description' },
   { label: 'Score', desc: 'Review fit score and ATS gaps' },
-  { label: 'Package', desc: 'Generate documents' },
+  { label: 'Package', desc: 'Generate application documents' },
 ]
+
+function ScoreDots({ score }) {
+  const color = score >= 8 ? 'var(--green)' : score >= 6 ? 'var(--yellow)' : 'var(--red)'
+  return (
+    <span className="score-dots">
+      {[1, 2, 3, 4, 5].map(i => (
+        <span
+          key={i}
+          className="score-dot"
+          style={{ background: i <= Math.round(score / 2) ? color : 'var(--border-hi)' }}
+        />
+      ))}
+      <span style={{ color, fontWeight: 700, fontSize: 15 }}>{score}</span>
+    </span>
+  )
+}
 
 function ProgressBar({ currentStep }) {
   return (
-    <div style={{ display: 'flex', gap: 0, marginBottom: 32, background: '#1a1a1a', borderRadius: 10, overflow: 'hidden', border: '1px solid #2a2a2a' }}>
+    <div style={{ display: 'flex', gap: 0, marginBottom: 28, background: 'var(--surface)', borderRadius: 'var(--radius)', overflow: 'hidden', border: '1px solid var(--border)' }}>
       {STEPS.map((s, i) => {
         const active = currentStep === i + 1
         const done = currentStep > i + 1
         return (
-          <div key={s.label} style={{ flex: 1, padding: '12px 16px', background: done ? '#14332a' : active ? '#0d1f3c' : 'transparent', borderRight: i < STEPS.length - 1 ? '1px solid #2a2a2a' : 'none' }}>
+          <div key={s.label} style={{ flex: 1, padding: '12px 16px', background: done ? 'var(--green-dim)' : active ? 'var(--blue-dim)' : 'transparent', borderRight: i < STEPS.length - 1 ? '1px solid var(--border)' : 'none' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, background: done ? '#22c55e' : active ? '#3b82f6' : '#2a2a2a', color: done || active ? '#000' : '#555', flexShrink: 0 }}>
+              <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, background: done ? 'var(--green)' : active ? 'var(--blue)' : 'var(--border-hi)', color: done || active ? '#fff' : 'var(--text-3)', flexShrink: 0 }}>
                 {done ? '✓' : i + 1}
               </div>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 13, color: done ? '#22c55e' : active ? '#f0f0f0' : '#555' }}>{s.label}</div>
-                <div style={{ fontSize: 11, color: '#555' }}>{s.desc}</div>
+                <div style={{ fontWeight: 600, fontSize: 13, color: done ? 'var(--green)' : active ? 'var(--text)' : 'var(--text-3)' }}>{s.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.desc}</div>
               </div>
             </div>
           </div>
@@ -150,12 +165,12 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
     }
   }
 
-  const markApplied = async () => {
+  const addToApplyQueue = async () => {
     if (!applicationId) { onNavigatePipeline(); return }
     setMarkingApplied(true)
     try {
       await fetch(`/api/applications/${applicationId}/mark-applied`, { method: 'POST' })
-      addToast('Marked as applied! View it in Pipeline.', 'success')
+      addToast('Added to apply queue! View it in Pipeline.', 'success')
       onNavigatePipeline()
     } catch {
       addToast('Could not update status.', 'error')
@@ -175,6 +190,10 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
     setError(null)
   }
 
+  const fitScore = result?.fitScore
+  const atsGaps = result?.atsGaps
+  const scoreColor = !fitScore ? 'var(--text-2)' : fitScore.score >= 8 ? 'var(--green)' : fitScore.score >= 6 ? 'var(--yellow)' : 'var(--red)'
+
   return (
     <div style={{ padding: 32, maxWidth: 720 }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Find a Job</h1>
@@ -184,7 +203,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
       {error && (
         <div className="error-msg" style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>{error}</span>
-          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 18 }}>×</button>
+          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 18 }}>×</button>
         </div>
       )}
 
@@ -198,14 +217,15 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
               placeholder="https://..."
               value={jobUrl}
               onChange={e => setJobUrl(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && score()}
             />
-            <div style={{ color: '#555', fontSize: 12, marginTop: 4 }}>We'll fetch the description automatically</div>
+            <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 4 }}>We'll fetch the description automatically</div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 16px', color: '#444', fontSize: 13 }}>
-            <div style={{ flex: 1, height: 1, background: '#2a2a2a' }} />
-            <span>or paste the description directly</span>
-            <div style={{ flex: 1, height: 1, background: '#2a2a2a' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 16px', color: 'var(--text-3)', fontSize: 13 }}>
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            <span>or paste description directly</span>
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
           </div>
 
           <div className="form-group">
@@ -220,11 +240,11 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Company Name</label>
+              <label className="form-label">Company</label>
               <input className="form-input" placeholder="Anthropic" value={company} onChange={e => setCompany(e.target.value)} />
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Role Title</label>
+              <label className="form-label">Role</label>
               <input className="form-input" placeholder="Operations Manager" value={role} onChange={e => setRole(e.target.value)} />
             </div>
           </div>
@@ -232,8 +252,8 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
           {scoring ? (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <span className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-              <div style={{ color: '#888', fontSize: 14, marginTop: 14 }}>🧠 Analyzing with Claude... (~15 seconds)</div>
-              <div style={{ color: '#555', fontSize: 12, marginTop: 6 }}>{scoringMsg}</div>
+              <div style={{ color: 'var(--text-2)', fontSize: 14, marginTop: 14 }}>Analyzing with Claude... (~15s)</div>
+              <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 6 }}>{scoringMsg}</div>
             </div>
           ) : (
             <button className="btn" onClick={score} style={{ width: '100%', padding: '12px 0', fontSize: 15 }}>
@@ -244,22 +264,76 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
       )}
 
       {/* Step 2 — Score Results */}
-      {step === 2 && result && (
+      {step === 2 && fitScore && (
         <div>
-          <div className="card" style={{ marginBottom: 20 }}>
-            <FitScoreDisplay fitScore={result.fitScore} atsGaps={result.atsGaps} />
+          {/* Score hero */}
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: 20 }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 72, fontWeight: 800, color: scoreColor, lineHeight: 1 }}>{fitScore.score}</div>
+                <ScoreDots score={fitScore.score} />
+              </div>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>{fitScore.verdict}</div>
+                <div style={{ color: 'var(--text-2)', fontSize: 14 }}>{fitScore.oneLineSummary}</div>
+              </div>
+            </div>
+
+            {/* Match / Gaps two-column */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+              <div>
+                <div style={{ color: 'var(--green)', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 8 }}>Matching</div>
+                {(fitScore.topMatchingSkills || []).map((s, i) => (
+                  <div key={i} style={{ color: 'var(--text)', fontSize: 13, marginBottom: 5 }}>✓ {s}</div>
+                ))}
+              </div>
+              <div>
+                <div style={{ color: 'var(--red)', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 8 }}>Gaps</div>
+                {(fitScore.keyGaps || []).map((g, i) => (
+                  <div key={i} style={{ color: 'var(--text)', fontSize: 13, marginBottom: 5 }}>✗ {g}</div>
+                ))}
+              </div>
+            </div>
+
+            {/* ATS keywords */}
+            {atsGaps && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ color: 'var(--text-2)', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 10 }}>ATS Keywords to Add</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {(atsGaps.criticalMissing || []).map((k, i) => (
+                    <span key={i} className="tag" style={{ background: 'var(--red-dim)', color: 'var(--red)', border: '1px solid rgba(239,68,68,0.3)' }}>{k}</span>
+                  ))}
+                  {(atsGaps.niceToHaveMissing || []).map((k, i) => (
+                    <span key={i} className="tag" style={{ background: 'var(--yellow-dim)', color: 'var(--yellow)', border: '1px solid rgba(234,179,8,0.3)' }}>{k}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Tailoring tips */}
+            {(fitScore.tailoringTips || []).length > 0 && (
+              <div>
+                <div style={{ color: 'var(--text-2)', fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 10 }}>Tailoring Tips</div>
+                <ol style={{ paddingLeft: 18, margin: 0 }}>
+                  {fitScore.tailoringTips.map((t, i) => (
+                    <li key={i} style={{ color: 'var(--text)', fontSize: 13, marginBottom: 6 }}>{t}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
           </div>
+
           <div style={{ display: 'flex', gap: 12 }}>
             <button
               onClick={saveOnly}
               disabled={generating}
-              style={{ background: 'none', border: '1px solid #2a2a2a', borderRadius: 8, color: '#888', cursor: generating ? 'default' : 'pointer', fontSize: 13, padding: '10px 20px', opacity: generating ? 0.5 : 1 }}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-2)', cursor: generating ? 'default' : 'pointer', fontSize: 13, padding: '10px 20px', opacity: generating ? 0.5 : 1 }}
             >
-              Skip — Not Worth Applying
+              Not Worth It
             </button>
             <button className="btn" onClick={generatePackage} disabled={generating} style={{ flex: 1, padding: '10px 0', fontSize: 15 }}>
               {generating
-                ? <><span className="spinner" style={{ marginRight: 8 }} />Generating...</>
+                ? <><span className="spinner" style={{ marginRight: 8 }} />Generating Package...</>
                 : '✨ Generate Full Package'}
             </button>
           </div>
@@ -269,26 +343,26 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
       {/* Step 3 — Package Ready */}
       {step === 3 && (
         <div className="card">
-          <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
-            <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Your application package is ready</h2>
-            <div style={{ color: '#888', fontSize: 14 }}>Everything you need to apply — generated and saved.</div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Package Ready</h2>
+            <div style={{ color: 'var(--text-2)', fontSize: 14 }}>Everything generated and saved to your outputs folder.</div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 32 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 28 }}>
             {[
-              { icon: '📄', label: 'Resume', hint: 'Tailored to this job description' },
+              { icon: '📄', label: 'Resume', hint: 'Tailored to this role' },
               { icon: '✉️', label: 'Cover Letter', hint: 'Personalized opening' },
               { icon: '🏢', label: 'Company Brief', hint: 'Research and talking points' },
-              { icon: '🔍', label: 'Other Roles', hint: 'More openings at this company' },
+              { icon: '☁️', label: 'Saved to Drive', hint: 'Accessible anywhere' },
             ].map(item => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#1a1a1a', borderRadius: 8, padding: '12px 16px' }}>
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '12px 16px' }}>
                 <span style={{ fontSize: 20 }}>{item.icon}</span>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500 }}>{item.label}</div>
-                  <div style={{ color: '#555', fontSize: 12 }}>{item.hint}</div>
+                  <div style={{ fontWeight: 500, fontSize: 14 }}>{item.label}</div>
+                  <div style={{ color: 'var(--text-3)', fontSize: 12 }}>{item.hint}</div>
                 </div>
-                <span style={{ color: '#22c55e', fontSize: 12 }}>✓ Ready</span>
+                <span style={{ color: 'var(--green)', fontSize: 12, fontWeight: 600 }}>✓ Ready</span>
               </div>
             ))}
           </div>
@@ -296,12 +370,12 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
           <div style={{ display: 'flex', gap: 12 }}>
             <button
               onClick={reset}
-              style={{ background: 'none', border: '1px solid #2a2a2a', borderRadius: 8, color: '#888', cursor: 'pointer', fontSize: 13, padding: '10px 20px' }}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-2)', cursor: 'pointer', fontSize: 13, padding: '10px 20px' }}
             >
-              Find Another Job
+              Find Another →
             </button>
-            <button className="btn" onClick={markApplied} disabled={markingApplied} style={{ flex: 1, padding: '10px 0', fontSize: 15 }}>
-              {markingApplied ? '...' : '✓ Mark as Applied'}
+            <button className="btn" onClick={addToApplyQueue} disabled={markingApplied} style={{ flex: 1, padding: '10px 0', fontSize: 15 }}>
+              {markingApplied ? 'Adding...' : '+ Add to Apply Queue'}
             </button>
           </div>
         </div>

@@ -20,6 +20,8 @@ const {
   getApplicationsDueFollowUp,
   updateApplicationStatus,
   getStats,
+  getOutreach,
+  getOutreachStats,
 } = require('../services/db');
 
 const OUTPUTS_DIR = path.join(__dirname, '..', 'outputs');
@@ -194,6 +196,25 @@ async function runMorningBrief() {
     }
   } else {
     console.log('📅 FOLLOW-UP DUE (0)\n');
+  }
+
+  // --- Outreach follow-up due ---
+  const outreachDue = getOutreach('sent').filter(o => {
+    const sentDaysAgo = Math.floor((Date.now() - new Date(o.sent_at)) / 86400000);
+    return sentDaysAgo >= 7;
+  });
+
+  if (outreachDue.length > 0) {
+    console.log('\n📨 OUTREACH FOLLOW-UP DUE');
+    outreachDue.forEach(o => {
+      const days = Math.floor((Date.now() - new Date(o.sent_at)) / 86400000);
+      console.log(`  → ${o.company} (${o.contact_name || 'Hiring Team'}) — sent ${days} days ago`);
+    });
+  }
+
+  const outreachStats = getOutreachStats();
+  if (outreachStats.total > 0) {
+    console.log(`\n📊 OUTREACH: ${outreachStats.sent} sent | ${outreachStats.replied} replied | ${outreachStats.replyRate}% reply rate`);
   }
 
   // --- Summary ---

@@ -3,8 +3,11 @@
   "watchedCompanies": [],
   "betaMode": true,
   "followUpDays": 5,
-  "minScoreToShow": 6,
+  "minScoreToShow": 6.0,
   "dailyScanTime": "08:00",
   "activeProfile": "sai",
-  "lastMorningBriefAt": null
+  "lastMorningBriefAt": null,
+  "autoTailorThreshold": 7.5,
+  "opportunityTypes": ["job", "contract", "remote"],
+  "discoveryEnabled": true
 }
