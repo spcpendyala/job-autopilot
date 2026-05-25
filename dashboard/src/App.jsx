@@ -11,6 +11,7 @@ import ApprovalScreen from './pages/ApprovalScreen'
 import Outreach from './pages/Outreach'
 import Profile from './pages/Profile'
 import Insights from './components/Insights'
+import AdminDashboard from './pages/AdminDashboard'
 import './styles.css'
 
 function ProfileGate({ onUpload }) {
@@ -45,6 +46,7 @@ export default function App() {
   const [showProfileGate, setShowProfileGate] = useState(false)
   const [prefillUrl, setPrefillUrl] = useState('')
   const [pendingApprovals, setPendingApprovals] = useState(0)
+  const [pendingQueue, setPendingQueue] = useState([])
 
   const addToast = (message, type = 'success') => {
     const id = Date.now()
@@ -60,11 +62,16 @@ export default function App() {
       .then(setMorningBrief)
       .catch(() => {})
 
-  const refreshPendingApprovals = () =>
+  const refreshPendingApprovals = () => {
     fetch('/api/approval-queue/stats')
       .then(r => r.json())
       .then(d => setPendingApprovals(d.pending || 0))
       .catch(() => {})
+    fetch('/api/approval-queue')
+      .then(r => r.json())
+      .then(d => setPendingQueue(Array.isArray(d) ? d : []))
+      .catch(() => setPendingQueue([]))
+  }
 
   useEffect(() => {
     fetch('/api/setup-status')
@@ -109,6 +116,7 @@ export default function App() {
           <MorningBrief
             brief={morningBrief}
             pendingApprovals={pendingApprovals}
+            pendingQueue={pendingQueue}
             onNavigate={setActivePage}
             onQuickApply={navigateToFind}
             addToast={addToast}
@@ -143,6 +151,7 @@ export default function App() {
         {activePage === 'insights' && (
           <Insights />
         )}
+        {activePage === 'admin' && <AdminDashboard addToast={addToast} />}
       </main>
 
       {/* Profile gate: shown when profile not yet approved */}

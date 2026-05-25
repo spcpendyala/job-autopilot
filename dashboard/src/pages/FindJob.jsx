@@ -219,7 +219,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
               onChange={e => setJobUrl(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && score()}
             />
-            <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 4 }}>We'll fetch the description automatically</div>
+            <p style={{ fontSize: 12, color: '#555', marginTop: 6, marginBottom: 0 }}>Works with LinkedIn, Greenhouse, Lever, Indeed, and most job boards</p>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 16px', color: 'var(--text-3)', fontSize: 13 }}>
@@ -236,6 +236,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
               onChange={e => setJobDescription(e.target.value)}
               style={{ minHeight: 140 }}
             />
+            <p style={{ fontSize: 12, color: '#555', marginTop: 6, marginBottom: 0 }}>Paste the full job description if the URL doesn't work</p>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
@@ -256,8 +257,8 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
               <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 6 }}>{scoringMsg}</div>
             </div>
           ) : (
-            <button className="btn" onClick={score} style={{ width: '100%', padding: '12px 0', fontSize: 15 }}>
-              Score This Job →
+            <button className="btn" onClick={score} disabled={scoring} style={{ width: '100%', padding: '12px 0', fontSize: 15, opacity: scoring ? 0.6 : 1, cursor: scoring ? 'not-allowed' : 'pointer' }}>
+              {scoring ? '⟳ Analyzing with Claude...' : 'Analyze Job'}
             </button>
           )}
         </div>
@@ -323,18 +324,23 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
             <button
-              onClick={saveOnly}
+              className="btn"
+              onClick={generatePackage}
               disabled={generating}
-              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-2)', cursor: generating ? 'default' : 'pointer', fontSize: 13, padding: '10px 20px', opacity: generating ? 0.5 : 1 }}
+              style={{ background: '#22c55e', color: '#000', padding: '14px 24px', fontSize: 15, fontWeight: 600, border: 'none', borderRadius: 6, cursor: generating ? 'not-allowed' : 'pointer', width: '100%', opacity: generating ? 0.7 : 1 }}
             >
-              Not Worth It
-            </button>
-            <button className="btn" onClick={generatePackage} disabled={generating} style={{ flex: 1, padding: '10px 0', fontSize: 15 }}>
               {generating
                 ? <><span className="spinner" style={{ marginRight: 8 }} />Generating Package...</>
                 : '✨ Generate Full Package'}
+            </button>
+            <button
+              onClick={saveOnly}
+              disabled={generating}
+              style={{ background: 'transparent', border: '1px solid #333', color: '#999', padding: '14px 24px', borderRadius: 6, cursor: generating ? 'not-allowed' : 'pointer', width: '100%', fontSize: 14 }}
+            >
+              Not Worth It
             </button>
           </div>
         </div>
@@ -378,6 +384,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
               {markingApplied ? 'Adding...' : '+ Add to Apply Queue'}
             </button>
           </div>
+          <a href="/api/applications/export-csv" style={{ display: 'block', textAlign: 'center', color: '#555', fontSize: 12, marginTop: 16, textDecoration: 'underline' }}>Export all applications as CSV</a>
         </div>
       )}
     </div>

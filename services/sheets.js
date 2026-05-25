@@ -13,6 +13,7 @@ function getSheetId() {
 }
 
 async function syncToSheets(applicationData) {
+  if (!process.env.TRACKING_SHEET_ID) return;
   const spreadsheetId = getSheetId();
   if (!spreadsheetId) return;
 
@@ -35,6 +36,7 @@ async function syncToSheets(applicationData) {
 }
 
 async function updateSheetStatus(jobId, status, notes, driveUrl) {
+  if (!process.env.TRACKING_SHEET_ID) return;
   const spreadsheetId = getSheetId();
   if (!spreadsheetId) return;
 

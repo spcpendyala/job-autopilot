@@ -13,7 +13,8 @@ function sanitizeName(str) {
 }
 
 async function createApplicationFolder(company, role, parentFolderId) {
-  const auth = getAuthClient();
+  const auth = await Promise.resolve(getAuthClient()).catch(() => null);
+  if (!auth) return null;
   const drive = google.drive({ version: 'v3', auth });
   const date = new Date().toISOString().slice(0, 10);
   const name = `${sanitizeName(company)} — ${sanitizeName(role)} — ${date}`;
@@ -40,7 +41,8 @@ async function uploadFileToDrive(localFilePath, fileName, folderId, mimeType) {
     return null;
   }
 
-  const auth = getAuthClient();
+  const auth = await Promise.resolve(getAuthClient()).catch(() => null);
+  if (!auth) return null;
   const drive = google.drive({ version: 'v3', auth });
   const ext = path.extname(fileName).toLowerCase();
   const resolvedMime = mimeType || MIME_TYPES[ext] || 'text/plain';

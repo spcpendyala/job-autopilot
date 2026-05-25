@@ -14,9 +14,11 @@ export default function Settings({ addToast }) {
   const [discovering, setDiscovering] = useState(false)
   const [discoverResult, setDiscoverResult] = useState(null)
   const [savingPrefs, setSavingPrefs] = useState(false)
+  const [setupStatus, setSetupStatus] = useState(null)
 
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(setConfig).catch(() => setConfig({}))
+    fetch('/api/setup-status').then(r => r.json()).then(setSetupStatus).catch(() => {})
   }, [])
 
   const patchConfig = async (patch) => {
@@ -68,6 +70,28 @@ export default function Settings({ addToast }) {
       <div style={{ padding: '8px 0 24px', color: '#999', fontSize: 13 }}>
         To update your profile or upload resumes, go to the <strong style={{ color: '#f0f0f0' }}>Profile</strong> page.
       </div>
+
+      {/* Connections */}
+      <Section title="Connections">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <span style={{ fontSize: 13, color: '#ccc', minWidth: 120 }}>Gmail</span>
+            {setupStatus?.checks?.googleConnected
+              ? <span style={{ color: 'var(--green)', fontSize: 13 }}>Connected</span>
+              : <span style={{ color: '#ef4444', fontSize: 13 }}>Not connected — run <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4 }}>npm run setup-google</code> on the server</span>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <span style={{ fontSize: 13, color: '#ccc', minWidth: 120 }}>Google Drive</span>
+            {setupStatus?.checks?.driveConfigured
+              ? <span style={{ color: 'var(--green)', fontSize: 13 }}>Connected — files sync to your Drive</span>
+              : <span style={{ color: '#f59e0b', fontSize: 13 }}>Not connected — files stored on server only</span>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <span style={{ fontSize: 13, color: '#ccc', minWidth: 120 }}>Google Sheets</span>
+            <span style={{ color: '#555', fontSize: 13 }}>Not required — export as CSV instead</span>
+          </div>
+        </div>
+      </Section>
 
       {/* Section 1 — Discovery */}
       <Section title="Discovery">
@@ -161,62 +185,12 @@ export default function Settings({ addToast }) {
         )}
       </Section>
 
-      {/* Section 2 — AI Engine */}
-      <Section title="AI Engine">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', flexShrink: 0 }} />
-          <span style={{ color: 'var(--green)', fontWeight: 600 }}>Connected</span>
-          <span style={{ color: 'var(--text-3)', fontSize: 13 }}>
-            · {config.betaMode ? 'Beta Mode — Haiku (faster, cheaper)' : 'Production Mode — Sonnet (smarter)'}
-          </span>
-        </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 14 }}>
-          <input
-            type="checkbox"
-            checked={config.betaMode || false}
-            onChange={e => patchConfig({ betaMode: e.target.checked })}
-          />
-          Beta Mode (Haiku) — reduces API costs by ~10x
-        </label>
-      </Section>
-
-      {/* Section 3 — Powered By */}
-      <Section title="Powered By">
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ color: 'var(--text-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Job Discovery</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {['Indeed', 'Remote OK', 'We Work Remotely', 'Remotive'].map(s => (
-              <span key={s} className="tag" style={{ background: 'var(--surface)', color: 'var(--text-2)' }}>{s}</span>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-          <div>
-            <div style={{ color: 'var(--text-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Salary Intel</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {['Glassdoor', 'Levels.fyi'].map(s => (
-                <span key={s} className="tag" style={{ background: 'var(--surface)', color: 'var(--text-2)' }}>{s}</span>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div style={{ color: 'var(--text-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Company Research</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {['Crunchbase', 'News API'].map(s => (
-                <span key={s} className="tag" style={{ background: 'var(--surface)', color: 'var(--text-2)' }}>{s}</span>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <div style={{ color: 'var(--text-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>AI Engine</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span className="tag" style={{ background: 'rgba(168,85,247,0.15)', color: 'var(--purple)' }}>Anthropic Claude</span>
-            <span style={{ color: 'var(--text-3)', fontSize: 13 }}>Sonnet 4 + Haiku 4.5</span>
-          </div>
-        </div>
+      {/* Export */}
+      <Section title="Export">
+        <button className="btn" onClick={() => { window.location.href = '/api/applications/export-csv' }}>
+          Export All Applications as CSV
+        </button>
+        <p style={{ fontSize: 12, color: '#555', marginTop: 8, marginBottom: 0 }}>Opens in Excel, Google Sheets, or any spreadsheet app</p>
       </Section>
     </div>
   )

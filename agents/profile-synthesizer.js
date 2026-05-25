@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { callClaude } = require('../services/claude');
 
-async function synthesizeProfile(resumeTexts) {
+async function synthesizeProfile(resumeTexts, userId = 'default') {
   const profileName = process.env.ACTIVE_PROFILE || 'sai';
   const n = resumeTexts.length;
 
@@ -67,18 +67,16 @@ Return ONLY valid JSON with this exact structure:
     throw new Error(`Failed to parse synthesis response: ${raw}`);
   }
 
-  // Write profile
-  const profilesDir = path.join(__dirname, '..', 'core', 'profiles');
-  if (!fs.existsSync(profilesDir)) fs.mkdirSync(profilesDir, { recursive: true });
-  fs.writeFileSync(path.join(profilesDir, `${profileName}.json`), JSON.stringify(parsed.profile, null, 2));
-
-  // Write base resume
-  fs.writeFileSync(path.join(__dirname, '..', 'core', 'base-resume.md'), parsed.baseResume);
-
-  // Generate category variants
-  const resumesDir = path.join(__dirname, '..', 'core', 'resumes');
+  // Write profile to per-user directory
+  const userDir = path.join(__dirname, '..', 'data', 'users', userId);
+  const resumesDir = path.join(userDir, 'resumes');
+  if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
   if (!fs.existsSync(resumesDir)) fs.mkdirSync(resumesDir, { recursive: true });
 
+  fs.writeFileSync(path.join(userDir, 'profile.json'), JSON.stringify(parsed.profile, null, 2));
+  fs.writeFileSync(path.join(userDir, 'base-resume.md'), parsed.baseResume);
+
+  // Generate category variants
   const variants = ['ops', 'tam', 'consulting'];
   await Promise.all(variants.map(async (variant) => {
     const emphasis = parsed.categoryVariants[variant] || '';

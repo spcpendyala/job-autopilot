@@ -1,16 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 
-const OUTPUTS_DIR = path.join(__dirname, '..', 'outputs');
-
 function sanitize(str) {
   return (str || 'Unknown').replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-]/g, '');
 }
 
-function makeFolderPath(company, role) {
+function makeFolderPath(userId, company, role) {
+  const outBase = path.join(__dirname, '..', 'data', 'users', userId, 'outputs');
+  if (!fs.existsSync(outBase)) fs.mkdirSync(outBase, { recursive: true });
   const date = new Date().toISOString().slice(0, 10);
   const base = `${sanitize(company)}-${sanitize(role)}-${date}`;
-  let folderPath = path.join(OUTPUTS_DIR, base);
+  let folderPath = path.join(outBase, base);
   if (!fs.existsSync(folderPath)) return folderPath;
   let i = 2;
   while (fs.existsSync(`${folderPath}-${i}`)) i++;
@@ -93,14 +93,10 @@ function buildOtherRolesMd(company, otherRoles) {
   return lines.join('\n');
 }
 
-function saveApplicationPackage(data) {
+function saveApplicationPackage(userId, data) {
   const { company, role, jobDescription, fitScore, atsGaps, resume, coverLetter, companyBrief, otherRoles } = data;
 
-  if (!fs.existsSync(OUTPUTS_DIR)) {
-    fs.mkdirSync(OUTPUTS_DIR, { recursive: true });
-  }
-
-  const folderPath = makeFolderPath(company, role);
+  const folderPath = makeFolderPath(userId || 'default', company, role);
   fs.mkdirSync(folderPath, { recursive: true });
 
   fs.writeFileSync(path.join(folderPath, 'resume.md'), resume, 'utf8');
@@ -181,7 +177,7 @@ function buildInterviewBriefMd(role, company, brief) {
   return lines.join('\n');
 }
 
-function saveInterviewBrief(applicationFolder, brief, role, company) {
+function saveInterviewBrief(userId, applicationFolder, brief, role, company) {
   if (!fs.existsSync(applicationFolder)) {
     throw new Error(`Application folder not found: ${applicationFolder}`);
   }
@@ -236,7 +232,7 @@ function buildSalaryBriefMd(role, company, brief) {
   return lines.join('\n');
 }
 
-function saveSalaryBrief(applicationFolder, brief, role, company) {
+function saveSalaryBrief(userId, applicationFolder, brief, role, company) {
   if (!fs.existsSync(applicationFolder)) {
     throw new Error(`Application folder not found: ${applicationFolder}`);
   }

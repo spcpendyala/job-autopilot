@@ -16,7 +16,8 @@
     "stop:prod": "pm2 stop all",
     "logs": "pm2 logs",
     "dev": "concurrently \"node api/server.js\" \"vite --config dashboard/vite.config.js\"",
-    "dashboard": "vite --config dashboard/vite.config.js"
+    "dashboard": "vite --config dashboard/vite.config.js",
+    "migrate": "node scripts/migrate-to-multiuser.js"
   },
   "keywords": [],
   "author": "",

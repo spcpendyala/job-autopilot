@@ -31,18 +31,21 @@ function writeConfig(data) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2));
 }
 
-function getProfilePath(userId) {
-  if (process.env.MULTI_USER === 'true' && userId !== 'default') {
-    return path.join(__dirname, '..', 'core', 'profiles', 'users', userId, 'profile.json');
-  }
-  return path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
+function getUserDir(userId) {
+  return path.join(__dirname, '..', 'data', 'users', userId)
 }
-
+function getProfilePath(userId) {
+  return path.join(getUserDir(userId), 'profile.json')
+}
 function getResumePath(userId) {
-  if (process.env.MULTI_USER === 'true' && userId !== 'default') {
-    return path.join(__dirname, '..', 'core', 'profiles', 'users', userId, 'base-resume.md');
-  }
-  return path.join(__dirname, '..', 'core', 'base-resume.md');
+  return path.join(getUserDir(userId), 'base-resume.md')
+}
+function getOutputsDir(userId) {
+  return path.join(getUserDir(userId), 'outputs')
+}
+function ensureUserDir(userId) {
+  const dirs = [getUserDir(userId), path.join(getUserDir(userId), 'resumes'), getOutputsDir(userId)]
+  dirs.forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }) })
 }
 
 // Per-user morning brief cache
@@ -67,17 +70,16 @@ const { analyzeApplicationPatterns } = require('../agents/rejection-analyzer');
 const { saveApplicationPackage, saveInterviewBrief, saveSalaryBrief } = require('../services/output-writer');
 const { syncToSheets, updateSheetStatus } = require('../services/sheets');
 
-const OUTPUTS_DIR = path.join(__dirname, '..', 'outputs');
-
 function sanitize(str) {
   return (str || 'Unknown').replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-]/g, '');
 }
 
-function findOutputsFolder(company, role) {
+function findOutputsFolder(company, role, userId) {
   const prefix = `${sanitize(company)}-${sanitize(role)}`;
-  if (!fs.existsSync(OUTPUTS_DIR)) return null;
-  const match = fs.readdirSync(OUTPUTS_DIR).find(f => f.startsWith(prefix));
-  return match ? path.join(OUTPUTS_DIR, match) : null;
+  const dir = getOutputsDir(userId);
+  if (!fs.existsSync(dir)) return null;
+  const match = fs.readdirSync(dir).find(f => f.startsWith(prefix));
+  return match ? path.join(dir, match) : null;
 }
 
 function readFile(filepath) {
@@ -87,16 +89,19 @@ function readFile(filepath) {
 initDB();
 
 const upload = multer({
-  dest: 'uploads/resumes/',
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = path.join(__dirname, '..', 'uploads', 'resumes', req.userId || 'default')
+      fs.mkdirSync(dir, { recursive: true })
+      cb(null, dir)
+    },
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+  }),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = [
-      'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain',
-    ];
-    cb(null, allowed.includes(file.mimetype) || file.originalname.endsWith('.pdf') || file.originalname.endsWith('.docx') || file.originalname.endsWith('.txt'));
-  },
+    const allowed = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain']
+    cb(null, allowed.includes(file.mimetype) || file.originalname.endsWith('.pdf') || file.originalname.endsWith('.docx') || file.originalname.endsWith('.txt'))
+  }
 });
 
 const app = express();
@@ -188,7 +193,7 @@ app.get('/api/applications/:id', (req, res) => {
     scoreDetails: found.raw_score_json ? JSON.parse(found.raw_score_json) : null,
   };
 
-  const folder = findOutputsFolder(found.company, found.role);
+  const folder = findOutputsFolder(found.company, found.role, req.userId);
   const files = {
     resume: folder ? readFile(path.join(folder, 'resume.md')) : null,
     coverLetter: folder ? readFile(path.join(folder, 'cover-letter.md')) : null,
@@ -244,7 +249,7 @@ app.post('/api/apply', async (req, res) => {
       findOtherRoles(company, jobUrl || ''),
     ]);
 
-    outputFolder = saveApplicationPackage({
+    outputFolder = saveApplicationPackage(req.userId, {
       company, role: jobTitle, jobUrl: url, jobDescription,
       fitScore, atsGaps, resume, coverLetter, companyBrief, otherRoles,
     });
@@ -278,7 +283,7 @@ app.post('/api/prep/:id', async (req, res) => {
   const found = apps.find(a => a.id === req.params.id);
   if (!found) return res.status(404).json({ error: 'Not found' });
 
-  const folder = findOutputsFolder(found.company, found.role);
+  const folder = findOutputsFolder(found.company, found.role, req.userId);
   if (!folder) return res.status(400).json({ error: 'No outputs folder found. Run with --full first.' });
 
   const jdRaw = readFile(path.join(folder, 'job-description.md'));
@@ -288,7 +293,7 @@ app.post('/api/prep/:id', async (req, res) => {
   const companyBrief = briefRaw ? JSON.parse(briefRaw) : null;
 
   const brief = await generateInterviewBrief(jdRaw, found.company, found.role, companyBrief);
-  saveInterviewBrief(folder, brief, found.role, found.company);
+  saveInterviewBrief(req.userId, folder, brief, found.role, found.company);
   updateApplicationStatus(found.id, 'interview-prep-ready');
 
   res.json({ success: true, briefPath: path.join(folder, 'interview-prep.md') });
@@ -299,7 +304,7 @@ app.post('/api/sync-drive/:id', async (req, res) => {
   const found = apps.find(a => a.id === req.params.id);
   if (!found) return res.status(404).json({ error: 'Not found' });
 
-  const folder = findOutputsFolder(found.company, found.role);
+  const folder = findOutputsFolder(found.company, found.role, req.userId);
   if (!folder) return res.status(400).json({ error: 'No outputs folder found.' });
 
   const driveResult = await syncApplicationToDrive(folder, found.company, found.role);
@@ -321,8 +326,8 @@ app.post('/api/salary', async (req, res) => {
     const apps = getAllApplications(req.userId);
     const found = apps.find(a => a.id === applicationId);
     if (found) {
-      const folder = findOutputsFolder(found.company, found.role);
-      if (folder) saveSalaryBrief(folder, salaryBrief, role, company);
+      const folder = findOutputsFolder(found.company, found.role, req.userId);
+      if (folder) saveSalaryBrief(req.userId, folder, salaryBrief, role, company);
     }
   }
 
@@ -414,12 +419,17 @@ app.get('/api/profile', (req, res) => {
 });
 
 app.post('/api/profile', (req, res) => {
+  ensureUserDir(req.userId);
   const profilePath = getProfilePath(req.userId);
-  const dir = path.dirname(profilePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const current = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};
   fs.writeFileSync(profilePath, JSON.stringify({ ...current, ...req.body }, null, 2));
   res.json({ success: true });
+});
+
+app.get('/api/profile/resume', (req, res) => {
+  const p = getResumePath(req.userId)
+  if (!fs.existsSync(p)) return res.json({ content: '' })
+  res.json({ content: fs.readFileSync(p, 'utf8') })
 });
 
 app.get('/api/config', (req, res) => {
@@ -457,6 +467,34 @@ app.delete('/api/applications/:id', (req, res) => {
   } finally {
     tmpDb.close();
   }
+});
+
+// CSV export
+app.get('/api/applications/export-csv', (req, res) => {
+  const apps = getAllApplications(req.userId)
+  const headers = ['ID','Company','Role','Score','Verdict','Status','Applied At','Job URL','Notes']
+  const rows = apps.map(a => [a.id,a.company||'',a.role||'',a.fit_score||'',a.verdict||'',a.status||'',a.applied_at||'',a.job_url||'',a.notes||''])
+  const csv = [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n')
+  res.setHeader('Content-Type','text/csv')
+  res.setHeader('Content-Disposition',`attachment; filename="applications-${Date.now()}.csv"`)
+  res.send(csv)
+});
+
+// Admin config endpoints
+app.get('/api/admin/config', (req, res) => {
+  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default'
+  if (!isAdmin) return res.status(403).json({ error: 'Admin only' })
+  const cfg = readConfig()
+  res.json({ ...cfg, betaMode: process.env.BETA_MODE === 'true', isAdmin: true })
+});
+
+app.post('/api/admin/config', (req, res) => {
+  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default'
+  if (!isAdmin) return res.status(403).json({ error: 'Admin only' })
+  const updated = { ...readConfig(), ...req.body }
+  writeConfig(updated)
+  if (req.body.betaMode !== undefined) process.env.BETA_MODE = String(req.body.betaMode)
+  res.json({ success: true, config: updated })
 });
 
 // --- Phase 15 endpoints ---
@@ -586,21 +624,14 @@ app.post('/api/profile/upload', upload.array('resumes', 6), async (req, res) => 
   if (files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
   if (files.length > 6) return res.status(400).json({ error: 'Maximum 6 resumes allowed' });
 
+  ensureUserDir(userId);
+
   for (const file of files) {
     saveUploadedResume(`R-${Date.now()}-${file.originalname}`, file.originalname, userId);
   }
 
   const texts = await Promise.all(files.map(f => parseResume(f.path, f.mimetype)));
-  const result = await synthesizeProfile(texts);
-
-  // Ensure user profile directory exists for multi-user mode
-  const profilePath = getProfilePath(userId);
-  const profileDir = path.dirname(profilePath);
-  if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
-
-  // Write profile and base resume to user-specific paths
-  fs.writeFileSync(profilePath, JSON.stringify(result.profile, null, 2));
-  fs.writeFileSync(getResumePath(userId), result.baseResume);
+  const result = await synthesizeProfile(texts, userId);
 
   markResumesProcessed(userId);
   setProfileStatus('pending_review', 'true', userId);
@@ -617,11 +648,10 @@ app.get('/api/profile/status', (req, res) => {
 app.post('/api/profile/approve', (req, res) => {
   const userId = req.userId;
   const { profile, baseResume } = req.body;
+
+  ensureUserDir(userId);
   const profilePath = getProfilePath(userId);
   const resumePath = getResumePath(userId);
-
-  const dir = path.dirname(profilePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   if (profile) fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
   if (baseResume) fs.writeFileSync(resumePath, baseResume);
@@ -638,23 +668,32 @@ app.post('/api/profile/reject', (req, res) => {
   res.json({ success: true });
 });
 
-// --- Phase 17: Admin endpoint ---
+// --- Phase 17: Admin endpoints ---
 
 app.get('/api/admin/users', (req, res) => {
-  if (process.env.MULTI_USER === 'true' && req.userId !== ADMIN_ID) {
+  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default';
+  if (process.env.MULTI_USER === 'true' && !isAdmin) {
     return res.status(403).json({ error: 'Admin only' });
   }
-  const usersDir = path.join(__dirname, '..', 'core', 'profiles', 'users');
+  const usersDir = path.join(__dirname, '..', 'data', 'users');
   if (!fs.existsSync(usersDir)) return res.json({ users: [] });
 
   const users = fs.readdirSync(usersDir)
-    .filter(id => fs.existsSync(path.join(usersDir, id, 'config.json')))
+    .filter(id => fs.statSync(path.join(usersDir, id)).isDirectory())
     .map(id => {
       try {
-        const cfg = JSON.parse(fs.readFileSync(path.join(usersDir, id, 'config.json'), 'utf8'));
+        const profilePath = path.join(usersDir, id, 'profile.json');
+        const profile = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};
         const stats = getStats(id);
-        return { id, ...cfg, stats };
-      } catch { return { id, error: 'Could not read config' }; }
+        const profileStatus = getProfileStatus(id);
+        return {
+          id,
+          name: profile.name || id,
+          email: profile.email || '',
+          profileApproved: profileStatus.approved === 'true',
+          stats,
+        };
+      } catch { return { id, error: 'Could not read profile' }; }
     });
 
   res.json({ users });
@@ -674,4 +713,4 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🚀 JobPilot API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`JobPilot API running on port ${PORT}`));
