@@ -244,8 +244,8 @@ app.post('/api/apply', async (req, res) => {
 
   if (generateDocs) {
     const [resume, coverLetter, companyBrief, otherRoles] = await Promise.all([
-      tailorResume(jobDescription, jobTitle, company, atsGaps),
-      generateCoverLetter(jobDescription, jobTitle, company, fitScore.score),
+      tailorResume(jobDescription, jobTitle, company, atsGaps, req.userId),
+      generateCoverLetter(jobDescription, jobTitle, company, fitScore.score, req.userId),
       getCompanyBrief(company, jobDescription),
       findOtherRoles(company, jobUrl || ''),
     ]);

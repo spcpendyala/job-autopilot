@@ -19,35 +19,49 @@ Extract the best from all versions.
 RESUMES:
 ${combinedText}
 
-Return ONLY valid JSON with this exact structure:
+Return ONLY valid JSON with this exact structure (no extra commentary):
 {
   "profile": {
     "name": "",
-    "location": "",
     "email": "",
     "phone": "",
-    "linkedin": "",
+    "location": "",
+    "website": "",
     "openToRemote": true,
     "openToHybrid": true,
+    "openTo": { "fullTime": true, "contract": false, "partTime": false, "freelance": false },
     "targetRoles": [],
     "yearsExperience": 0,
+    "minSalary": "",
     "summary": "",
+    "about": "",
     "coreSkills": [],
-    "tools": {
-      "itsm": [], "infrastructure": [], "security": [],
-      "analytics": [], "collaboration": [], "other": []
-    },
     "experience": [
       {
-        "title": "", "company": "", "from": "", "to": "",
-        "highlights": []
+        "title": "", "company": "", "from": "", "to": "Present",
+        "location": "", "description": "", "highlights": [], "skills": []
       }
     ],
     "education": [
-      { "degree": "", "institution": "" }
+      { "degree": "", "institution": "", "year": "" }
     ],
-    "certifications": [],
-    "languages": []
+    "certifications": [
+      { "name": "", "issuer": "", "year": "", "expires": "" }
+    ],
+    "achievements": [],
+    "projects": [
+      { "name": "", "description": "", "url": "", "techUsed": [] }
+    ],
+    "languages": [
+      { "language": "", "level": "" }
+    ],
+    "volunteering": [
+      { "role": "", "organization": "", "from": "", "to": "", "description": "" }
+    ],
+    "tools": {
+      "itsm": [], "infrastructure": [], "security": [],
+      "analytics": [], "collaboration": [], "other": []
+    }
   },
   "baseResume": "# [Name]\\n[full markdown resume — best single version synthesized from all uploads]",
   "categoryVariants": {

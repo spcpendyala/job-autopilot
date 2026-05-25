@@ -2,23 +2,26 @@ const path = require('path');
 const fs = require('fs');
 const { callClaude } = require('../services/claude');
 
-const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
-const resumePath = path.join(__dirname, '..', 'core', 'base-resume.md');
+function loadUserProfile(userId = 'default') {
+  const profilePath = path.join(__dirname, '..', 'data', 'users', userId, 'profile.json');
+  const resumePath = path.join(__dirname, '..', 'data', 'users', userId, 'base-resume.md');
+  const profile = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};
+  const resume = fs.existsSync(resumePath) ? fs.readFileSync(resumePath, 'utf8') : '';
+  return { profile, resume };
+}
 
-const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
-const resume = fs.readFileSync(resumePath, 'utf8');
+async function tailorResume(jobDescription, jobTitle, company, atsGaps, userId = 'default') {
+  const { profile, resume } = loadUserProfile(userId);
+  const keyPhrasesToUse = atsGaps?.keyPhrasesToUse?.join(', ') || '';
+  const criticalMissing = atsGaps?.criticalMissing?.join(', ') || '';
 
-const systemPrompt = `You are an expert resume writer and career strategist.
+  const systemPrompt = `You are an expert resume writer and career strategist.
 
 CANDIDATE PROFILE:
 ${JSON.stringify(profile, null, 2)}
 
 BASE RESUME:
 ${resume}`;
-
-async function tailorResume(jobDescription, jobTitle, company, atsGaps) {
-  const keyPhrasesToUse = atsGaps?.keyPhrasesToUse?.join(', ') || '';
-  const criticalMissing = atsGaps?.criticalMissing?.join(', ') || '';
 
   const userMessage = `Tailor this candidate's resume for the following role.
 
@@ -42,7 +45,7 @@ Rules:
 - Use strong action verbs and keep quantified achievements
 
 Return the complete tailored resume in clean markdown. No explanation, no preamble.
-Must start with # Sai Pendyala and include all sections.`;
+Must start with # ${profile.name || 'Candidate'} and include all sections.`;
 
   const raw = await callClaude(userMessage, {
     tier: 'quality',

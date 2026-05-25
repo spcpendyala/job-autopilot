@@ -2,16 +2,19 @@ const path = require('path');
 const fs = require('fs');
 const { callClaude } = require('../services/claude');
 
-const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
+function loadUserProfile(userId = 'default') {
+  const profilePath = path.join(__dirname, '..', 'data', 'users', userId, 'profile.json');
+  return fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};
+}
 
-const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+async function generateCoverLetter(jobDescription, jobTitle, company, fitScore, userId = 'default') {
+  const profile = loadUserProfile(userId);
 
-const systemPrompt = `You are an expert cover letter writer who crafts concise, compelling letters that get interviews.
+  const systemPrompt = `You are an expert cover letter writer who crafts concise, compelling letters that get interviews.
 
 CANDIDATE PROFILE:
 ${JSON.stringify(profile, null, 2)}`;
 
-async function generateCoverLetter(jobDescription, jobTitle, company, fitScore) {
   const userMessage = `Write a cover letter for this candidate applying to the following role.
 
 Company: ${company || 'Unknown'}
