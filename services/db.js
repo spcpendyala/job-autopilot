@@ -101,6 +101,57 @@ function initDB() {
 
   db.exec(`CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT)`);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS preference_signals (
+      id TEXT PRIMARY KEY,
+      user_id TEXT DEFAULT 'default',
+      signal_type TEXT,
+      application_id TEXT,
+      job_company TEXT,
+      job_role TEXT,
+      fit_score REAL,
+      metadata TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id TEXT PRIMARY KEY,
+      preferences_json TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS application_versions (
+      id TEXT PRIMARY KEY,
+      application_id TEXT,
+      user_id TEXT DEFAULT 'default',
+      version INTEGER DEFAULT 1,
+      tailored_resume TEXT,
+      cover_letter TEXT,
+      job_description TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS email_responses (
+      id TEXT PRIMARY KEY,
+      user_id TEXT DEFAULT 'default',
+      application_id TEXT,
+      subject TEXT,
+      from_email TEXT,
+      body_snippet TEXT,
+      classification TEXT,
+      received_at TEXT,
+      processed_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS skills_gap (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT DEFAULT 'default',
+      keyword TEXT,
+      frequency INTEGER DEFAULT 1,
+      last_seen TEXT DEFAULT (datetime('now'))
+    );
+  `);
+
   migrateAddUserId();
 }
 
@@ -359,6 +410,40 @@ function getOutreachStats(userId = 'default') {
   return { total: row.total || 0, sent, replied, replyRate };
 }
 
+function logPreferenceSignal(data, userId = 'default') {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  const id = `SIG-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  db.prepare(`
+    INSERT INTO preference_signals
+      (id, user_id, signal_type, application_id, job_company, job_role, fit_score, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, userId, data.signal_type || 'unknown', data.application_id || null,
+    data.job_company || null, data.job_role || null, data.fit_score || null,
+    data.metadata ? JSON.stringify(data.metadata) : null);
+  return id;
+}
+
+function getPreferenceSignals(userId = 'default', limit = 100) {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  return db.prepare(
+    'SELECT * FROM preference_signals WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+  ).all(userId, limit);
+}
+
+function saveApplicationVersion(data, userId = 'default') {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  const id = `VER-${Date.now()}`;
+  const existing = db.prepare('SELECT MAX(version) as v FROM application_versions WHERE application_id = ? AND user_id = ?').get(data.application_id, userId);
+  const version = (existing?.v || 0) + 1;
+  db.prepare(`
+    INSERT INTO application_versions
+      (id, application_id, user_id, version, tailored_resume, cover_letter, job_description)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, data.application_id, userId, version,
+    data.tailored_resume || null, data.cover_letter || null, data.job_description || null);
+  return id;
+}
+
 function getMetadata(key) {
   if (!db) throw new Error('DB not initialized. Call initDB() first.');
   const row = db.prepare('SELECT value FROM metadata WHERE key = ?').get(key);
@@ -378,4 +463,5 @@ module.exports = {
   addToApplyQueue, getApplyQueue, markApplied, setApplicationApplied, getApprovalStats,
   saveOutreach, getOutreach, updateOutreachStatus, getOutreachStats,
   getMetadata, setMetadata,
+  logPreferenceSignal, getPreferenceSignals, saveApplicationVersion,
 };

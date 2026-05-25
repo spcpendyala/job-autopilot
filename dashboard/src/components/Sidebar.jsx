@@ -8,14 +8,11 @@ export default function Sidebar({ activePage, setActivePage, morningBrief, pendi
   }, [])
 
   const baseItems = [
-    { id: 'home',     icon: '🌅', label: 'Morning Brief' },
-    { id: 'approval', icon: '⏳', label: 'Review Queue',  badge: pendingApprovals },
+    { id: 'home',     icon: '🏠', label: 'Home',        badge: pendingApprovals },
     { id: 'pipeline', icon: '📋', label: 'Pipeline' },
-    { id: 'outreach', icon: '📨', label: 'Outreach' },
     { id: 'find',     icon: '🔍', label: 'Find a Job' },
     { id: 'profile',  icon: '👤', label: 'Profile' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
-    { id: 'insights', icon: '📊', label: 'Insights' },
   ]
   const navItems = [...baseItems, ...(isAdmin ? [{ id: 'admin', icon: '🛠️', label: 'Admin' }] : [])]
 

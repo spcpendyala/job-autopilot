@@ -16,6 +16,7 @@ const {
   addToApprovalQueue, getApprovalQueue, updateApprovalStatus,
   addToApplyQueue, getApplyQueue, markApplied, setApplicationApplied, getApprovalStats,
   saveOutreach, getOutreach, updateOutreachStatus, getOutreachStats,
+  logPreferenceSignal, getPreferenceSignals, saveApplicationVersion,
 } = require('../services/db');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'core', 'config.json');
@@ -412,10 +413,32 @@ app.get('/api/morning-brief', (req, res) => {
   res.json(briefData);
 });
 
+function computeCompleteness(p) {
+  const checks = [
+    { field: 'name', weight: 10, check: () => !!p.name },
+    { field: 'email', weight: 8, check: () => !!p.email },
+    { field: 'phone', weight: 5, check: () => !!p.phone },
+    { field: 'location', weight: 5, check: () => !!p.location },
+    { field: 'summary', weight: 12, check: () => !!p.summary && p.summary.length > 50 },
+    { field: 'coreSkills', weight: 10, check: () => Array.isArray(p.coreSkills) && p.coreSkills.length >= 3 },
+    { field: 'targetRoles', weight: 8, check: () => Array.isArray(p.targetRoles) && p.targetRoles.length >= 1 },
+    { field: 'experience', weight: 15, check: () => Array.isArray(p.experience) && p.experience.length >= 1 },
+    { field: 'education', weight: 8, check: () => Array.isArray(p.education) && p.education.length >= 1 },
+    { field: 'certifications', weight: 5, check: () => Array.isArray(p.certifications) && p.certifications.length >= 1 },
+    { field: 'achievements', weight: 7, check: () => Array.isArray(p.achievements) && p.achievements.length >= 1 },
+    { field: 'projects', weight: 7, check: () => Array.isArray(p.projects) && p.projects.length >= 1 },
+  ];
+  const total = checks.reduce((s, c) => s + c.weight, 0);
+  const earned = checks.filter(c => c.check()).reduce((s, c) => s + c.weight, 0);
+  return Math.round((earned / total) * 100);
+}
+
 app.get('/api/profile', (req, res) => {
   const profilePath = getProfilePath(req.userId);
-  if (!fs.existsSync(profilePath)) return res.json({});
-  res.json(JSON.parse(fs.readFileSync(profilePath, 'utf8')));
+  if (!fs.existsSync(profilePath)) return res.json({ completeness: 0 });
+  const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+  profile.completeness = computeCompleteness(profile);
+  res.json(profile);
 });
 
 app.post('/api/profile', (req, res) => {
@@ -449,6 +472,13 @@ app.post('/api/discover', (req, res) => {
     .filter(a => a.status === 'discovered')
     .map(a => ({ id: a.id, title: a.role, url: a.job_url, company: a.company, fitScore: a.fit_score }));
   res.json({ discovered });
+});
+
+app.post('/api/signals', (req, res) => {
+  try {
+    logPreferenceSignal(req.body, req.userId);
+    res.json({ success: true });
+  } catch { res.json({ success: false }); }
 });
 
 app.post('/api/applications/:id/mark-applied', (req, res) => {

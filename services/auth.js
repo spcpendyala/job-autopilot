@@ -3,7 +3,7 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy
 const fs = require('fs')
 const path = require('path')
 
-const USERS_DIR = path.join(__dirname, '..', 'core', 'profiles', 'users')
+const USERS_DIR = path.join(__dirname, '..', 'data', 'users')
 
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
