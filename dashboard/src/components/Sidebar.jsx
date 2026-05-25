@@ -5,6 +5,7 @@ export default function Sidebar({ activePage, setActivePage, morningBrief, pendi
     { id: 'pipeline', icon: '📋', label: 'Pipeline' },
     { id: 'outreach', icon: '📨', label: 'Outreach' },
     { id: 'find',     icon: '🔍', label: 'Find a Job' },
+    { id: 'profile',  icon: '👤', label: 'Profile' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
   ]
 

@@ -9,6 +9,7 @@ import FindJob from './pages/FindJob'
 import Settings from './pages/Settings'
 import ApprovalScreen from './pages/ApprovalScreen'
 import Outreach from './pages/Outreach'
+import Profile from './pages/Profile'
 import './styles.css'
 
 function ProfileGate({ onUpload }) {
@@ -135,6 +136,9 @@ export default function App() {
         {activePage === 'settings' && (
           <Settings addToast={addToast} />
         )}
+        {activePage === 'profile' && (
+          <Profile addToast={addToast} />
+        )}
       </main>
 
       {/* Profile gate: shown when profile not yet approved */}
@@ -142,7 +146,7 @@ export default function App() {
         <ProfileGate
           onUpload={() => {
             setShowProfileGate(false)
-            setActivePage('settings')
+            setActivePage('profile')
           }}
         />
       )}
