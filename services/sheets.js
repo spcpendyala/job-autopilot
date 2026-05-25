@@ -6,7 +6,7 @@ const SHEET_NAME = 'Applications';
 function getSheetId() {
   const id = process.env.TRACKING_SHEET_ID;
   if (!id) {
-    console.warn('TRACKING_SHEET_ID not set — skipping Sheets sync');
+
     return null;
   }
   return id;
