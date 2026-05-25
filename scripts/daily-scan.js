@@ -22,7 +22,11 @@ const {
   getStats,
   getOutreach,
   getOutreachStats,
+  getApprovalStats,
+  getMetadata,
+  setMetadata,
 } = require('../services/db');
+const { analyzeApplicationPatterns } = require('../agents/rejection-analyzer');
 
 const OUTPUTS_DIR = path.join(__dirname, '..', 'outputs');
 
@@ -217,11 +221,48 @@ async function runMorningBrief() {
     console.log(`\n📊 OUTREACH: ${outreachStats.sent} sent | ${outreachStats.replied} replied | ${outreachStats.replyRate}% reply rate`);
   }
 
+  // --- Approval Queue Summary (Phase 13) ---
+  const approvalStats = getApprovalStats();
+  if (approvalStats.pending > 0 || approvalStats.applyReady > 0) {
+    console.log('⏳ APPROVAL QUEUE');
+    if (approvalStats.pending > 0) {
+      console.log(`  Pending review: ${approvalStats.pending} package${approvalStats.pending !== 1 ? 's' : ''}`);
+    }
+    if (approvalStats.applyReady > 0) {
+      console.log(`  Ready to apply: ${approvalStats.applyReady} approved package${approvalStats.applyReady !== 1 ? 's' : ''}`);
+    }
+    console.log('  → Open dashboard to review');
+    console.log();
+  }
+
   // --- Summary ---
   const stats = getStats();
   console.log('📊 SUMMARY');
   console.log(`  Applied: ${stats.applied} | Responded: ${stats.responded} | Interviews: ${stats.interviews} | Rejections: ${stats.rejections}`);
   console.log('══════════════════════════════════════════\n');
+
+  // --- Strategy check (Phase 8) ---
+  const currentCount = stats.total || 0;
+  const lastAnalyzedCount = getMetadata('last_analyzed_count');
+  if (currentCount >= 5 && String(currentCount) !== String(lastAnalyzedCount)) {
+    try {
+      console.log('📊 STRATEGY CHECK');
+      const analysis = await analyzeApplicationPatterns();
+      if (!analysis.insufficientData) {
+        const topIssue = analysis.topIssues && analysis.topIssues[0];
+        console.log(`   Grade: ${analysis.overallGrade} | Response Rate: ${analysis.computedStats.responseRate}%`);
+        if (topIssue) {
+          console.log(`   Top Issue: ${topIssue.issue}`);
+          console.log(`   Fix: ${topIssue.fix}`);
+        }
+        console.log('   Full report: npm run analyze');
+        setMetadata('last_analyzed_count', currentCount);
+      }
+      console.log('══════════════════════════════════════════\n');
+    } catch (err) {
+      console.error('  Strategy check failed:', err.message);
+    }
+  }
 }
 
 runMorningBrief().then(() => {

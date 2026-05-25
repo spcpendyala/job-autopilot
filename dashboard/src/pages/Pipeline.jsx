@@ -26,7 +26,8 @@ const COLUMNS = [
   { id: 'applied',    label: 'APPLIED',    color: 'var(--blue)',    statuses: ['applied'] },
   { id: 'responded',  label: 'RESPONDED',  color: 'var(--yellow)',  statuses: ['responded', 'interview-prep-ready'] },
   { id: 'interview',  label: 'INTERVIEW',  color: 'var(--green)',   statuses: ['interview'] },
-  { id: 'offer',      label: 'OFFER',      color: 'var(--purple)',  statuses: ['offer', 'rejected'] },
+  { id: 'offer',      label: 'OFFER',      color: 'var(--purple)',  statuses: ['offer'] },
+  { id: 'rejected',   label: 'REJECTED',   color: 'var(--red)',     statuses: ['rejected'] },
 ]
 
 function KanbanCard({ app, applyItems, onClick, addToast }) {
@@ -125,6 +126,7 @@ export default function PipelinePage({ addToast }) {
   const [search, setSearch] = useState('')
   const [view, setView] = useState('kanban')
   const [sortBy, setSortBy] = useState('newest')
+  const [verdictFilter, setVerdictFilter] = useState('all')
 
   const load = () => {
     Promise.all([
@@ -141,9 +143,19 @@ export default function PipelinePage({ addToast }) {
 
   const filtered = apps
     .filter(a => {
-      if (!search) return true
-      const q = search.toLowerCase()
-      return (a.company || '').toLowerCase().includes(q) || (a.role || '').toLowerCase().includes(q)
+      if (search) {
+        const q = search.toLowerCase()
+        if (!(a.company || '').toLowerCase().includes(q) && !(a.role || '').toLowerCase().includes(q)) return false
+      }
+      if (verdictFilter !== 'all') {
+        const verdictMap = {
+          strong: 'STRONG MATCH',
+          good: 'GOOD MATCH',
+          stretch: 'STRETCH',
+        }
+        if ((a.verdict || '') !== verdictMap[verdictFilter]) return false
+      }
+      return true
     })
     .sort((a, b) => {
       if (sortBy === 'score') return (b.fit_score || 0) - (a.fit_score || 0)
@@ -193,6 +205,12 @@ export default function PipelinePage({ addToast }) {
           onChange={e => setSearch(e.target.value)}
           style={{ maxWidth: 240, margin: 0 }}
         />
+        <select className="form-select" value={verdictFilter} onChange={e => setVerdictFilter(e.target.value)} style={{ width: 'auto', margin: 0 }}>
+          <option value="all">All Verdicts</option>
+          <option value="strong">Strong Match</option>
+          <option value="good">Good Match</option>
+          <option value="stretch">Stretch</option>
+        </select>
         <select className="form-select" value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ width: 'auto', margin: 0 }}>
           <option value="newest">Newest First</option>
           <option value="score">By Score</option>

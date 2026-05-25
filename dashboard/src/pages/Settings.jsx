@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useDropzone } from 'react-dropzone'
+import { useState, useEffect } from 'react'
 
 function Section({ title, children }) {
   return (
@@ -10,122 +9,13 @@ function Section({ title, children }) {
   )
 }
 
-function TagInput({ tags, onAdd, onRemove, placeholder }) {
-  const [input, setInput] = useState('')
-  const add = () => { if (input.trim()) { onAdd(input.trim()); setInput('') } }
-  return (
-    <div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-        {(tags || []).map((t, i) => (
-          <span key={i} className="tag" style={{ cursor: 'pointer' }} onClick={() => onRemove(i)}>
-            {t} <span style={{ opacity: 0.6 }}>×</span>
-          </span>
-        ))}
-        <span className="tag" style={{ background: 'transparent', border: '1px dashed var(--border-hi)', color: 'var(--text-3)', cursor: 'pointer' }} onClick={() => document.getElementById('tag-add-input')?.focus()}>
-          + Add
-        </span>
-      </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <input
-          id="tag-add-input"
-          className="form-input"
-          placeholder={placeholder}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-          style={{ fontSize: 13 }}
-        />
-        <button className="btn btn-ghost btn-sm" onClick={add}>Add</button>
-      </div>
-    </div>
-  )
-}
-
-function ResumeUploadZone({ onUploadComplete, addToast }) {
-  const [files, setFiles] = useState([])
-  const [uploading, setUploading] = useState(false)
-  const [synthesisNotes, setSynthesisNotes] = useState('')
-
-  const onDrop = useCallback(accepted => {
-    const merged = [...files, ...accepted].slice(0, 6)
-    setFiles(merged)
-  }, [files])
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: { 'application/pdf': ['.pdf'], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'], 'text/plain': ['.txt'] },
-    maxFiles: 6,
-    multiple: true,
-  })
-
-  const synthesize = async () => {
-    if (files.length === 0) { addToast('Add at least one resume file.', 'error'); return }
-    setUploading(true)
-    setSynthesisNotes('')
-    try {
-      const fd = new FormData()
-      files.forEach(f => fd.append('resumes', f))
-      const r = await fetch('/api/profile/upload', { method: 'POST', body: fd })
-      const d = await r.json()
-      if (d.error) throw new Error(d.error)
-      setSynthesisNotes(d.synthesisNotes || '')
-      addToast('Profile synthesized from your resumes!', 'success')
-      setFiles([])
-      onUploadComplete && onUploadComplete(d.profile)
-    } catch (err) {
-      addToast(err.message || 'Upload failed.', 'error')
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  return (
-    <div style={{ marginBottom: 24 }}>
-      <div {...getRootProps()} className="dropzone" style={{ borderColor: isDragActive ? 'var(--blue)' : undefined, background: isDragActive ? 'var(--blue-dim)' : undefined }}>
-        <input {...getInputProps()} />
-        <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>
-          {isDragActive ? 'Drop resumes here' : 'Upload Resumes to Improve Profile'}
-        </div>
-        <div style={{ color: 'var(--text-3)', fontSize: 13 }}>Drop PDF, DOCX, or TXT · Up to 6 · AI synthesizes automatically</div>
-      </div>
-
-      {files.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {files.map((f, i) => (
-              <span key={i} className="tag" style={{ cursor: 'pointer' }} onClick={() => setFiles(fs => fs.filter((_, j) => j !== i))}>
-                {f.name} ×
-              </span>
-            ))}
-          </div>
-          <button className="btn" onClick={synthesize} disabled={uploading} style={{ width: '100%' }}>
-            {uploading ? <><span className="spinner" style={{ marginRight: 8 }} />Synthesizing with Claude...</> : `Synthesize Profile from ${files.length} Resume${files.length > 1 ? 's' : ''}`}
-          </button>
-        </div>
-      )}
-
-      {synthesisNotes && (
-        <div style={{ marginTop: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '12px 16px', fontSize: 13, color: 'var(--text-2)' }}>
-          <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--green)' }}>✓ Synthesis complete</div>
-          {synthesisNotes}
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function Settings({ addToast }) {
-  const [profile, setProfile] = useState(null)
   const [config, setConfig] = useState(null)
-  const [profileForm, setProfileForm] = useState({})
   const [discovering, setDiscovering] = useState(false)
   const [discoverResult, setDiscoverResult] = useState(null)
-  const [savingProfile, setSavingProfile] = useState(false)
   const [savingPrefs, setSavingPrefs] = useState(false)
 
   useEffect(() => {
-    fetch('/api/profile').then(r => r.json()).then(p => { setProfile(p); setProfileForm(p) }).catch(() => setProfile({}))
     fetch('/api/config').then(r => r.json()).then(setConfig).catch(() => setConfig({}))
   }, [])
 
@@ -139,20 +29,6 @@ export default function Settings({ addToast }) {
         body: JSON.stringify(updated),
       })
     } catch { addToast('Failed to save setting.', 'error') }
-  }
-
-  const saveProfile = async () => {
-    setSavingProfile(true)
-    try {
-      await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profileForm),
-      })
-      setProfile(profileForm)
-      addToast('Profile saved!', 'success')
-    } catch { addToast('Failed to save profile.', 'error') }
-    finally { setSavingProfile(false) }
   }
 
   const runDiscover = async () => {
@@ -180,7 +56,7 @@ export default function Settings({ addToast }) {
     finally { setSavingPrefs(false) }
   }
 
-  if (!profile || !config) return (
+  if (!config) return (
     <div style={{ padding: 32, textAlign: 'center', paddingTop: 80 }}>
       <span className="spinner" />
     </div>
@@ -188,93 +64,17 @@ export default function Settings({ addToast }) {
 
   return (
     <div style={{ padding: 32, maxWidth: 720 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Settings</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Settings</h1>
+      <div style={{ padding: '8px 0 24px', color: '#999', fontSize: 13 }}>
+        To update your profile or upload resumes, go to the <strong style={{ color: '#f0f0f0' }}>Profile</strong> page.
+      </div>
 
-      {/* Section 1 — Your Profile */}
-      <Section title="Your Profile">
-        <ResumeUploadZone
-          addToast={addToast}
-          onUploadComplete={synthesized => {
-            if (synthesized) {
-              setProfile(synthesized)
-              setProfileForm(synthesized)
-            } else {
-              fetch('/api/profile').then(r => r.json()).then(p => { setProfile(p); setProfileForm(p) }).catch(() => {})
-            }
-          }}
-        />
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-          {[
-            { key: 'name', label: 'Name', placeholder: 'Sai Pendyala' },
-            { key: 'yearsExperience', label: 'Years Exp', placeholder: '10', type: 'number' },
-            { key: 'location', label: 'Location', placeholder: 'Ajax, Ontario' },
-            { key: 'email', label: 'Email', placeholder: 'you@example.com' },
-          ].map(({ key, label, placeholder, type }) => (
-            <div key={key} className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">{label}</label>
-              <input
-                type={type || 'text'}
-                className="form-input"
-                placeholder={placeholder}
-                value={profileForm[key] || ''}
-                onChange={e => setProfileForm(f => ({ ...f, [key]: type === 'number' ? (parseInt(e.target.value) || 0) : e.target.value }))}
-              />
-            </div>
-          ))}
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label className="form-label">Target Roles <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(click to remove)</span></label>
-          <TagInput
-            tags={profileForm.targetRoles || []}
-            onAdd={r => setProfileForm(f => ({ ...f, targetRoles: [...(f.targetRoles || []), r] }))}
-            onRemove={i => setProfileForm(f => ({ ...f, targetRoles: (f.targetRoles || []).filter((_, j) => j !== i) }))}
-            placeholder="Operations Manager..."
-          />
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label className="form-label">Open to</label>
-          <div style={{ display: 'flex', gap: 16 }}>
-            {[
-              { key: 'openToRemote', label: 'Remote' },
-              { key: 'openToHybrid', label: 'Hybrid' },
-            ].map(({ key, label }) => (
-              <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
-                <input
-                  type="checkbox"
-                  checked={!!profileForm[key]}
-                  onChange={e => setProfileForm(f => ({ ...f, [key]: e.target.checked }))}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 20 }}>
-          <label className="form-label">Core Skills <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(click to remove)</span></label>
-          <TagInput
-            tags={profileForm.coreSkills || []}
-            onAdd={s => setProfileForm(f => ({ ...f, coreSkills: [...(f.coreSkills || []), s] }))}
-            onRemove={i => setProfileForm(f => ({ ...f, coreSkills: (f.coreSkills || []).filter((_, j) => j !== i) }))}
-            placeholder="Incident Management, ITIL..."
-          />
-        </div>
-
-        <button className="btn" onClick={saveProfile} disabled={savingProfile}>
-          {savingProfile ? 'Saving...' : 'Save Profile Changes'}
-        </button>
-      </Section>
-
-      {/* Section 2 — Discovery */}
+      {/* Section 1 — Discovery */}
       <Section title="Discovery">
         <div style={{ marginBottom: 20 }}>
           <label className="form-label">What I'm looking for</label>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             {['Full-time', 'Contract', 'Remote', 'Freelance'].map(type => {
-              const key = type.toLowerCase().replace('-', '')
               const active = (config.opportunityTypes || []).includes(type.toLowerCase())
               return (
                 <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
@@ -361,7 +161,7 @@ export default function Settings({ addToast }) {
         )}
       </Section>
 
-      {/* Section 3 — AI Engine */}
+      {/* Section 2 — AI Engine */}
       <Section title="AI Engine">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', flexShrink: 0 }} />
@@ -380,7 +180,7 @@ export default function Settings({ addToast }) {
         </label>
       </Section>
 
-      {/* Section 4 — Powered By */}
+      {/* Section 3 — Powered By */}
       <Section title="Powered By">
         <div style={{ marginBottom: 20 }}>
           <div style={{ color: 'var(--text-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Job Discovery</div>

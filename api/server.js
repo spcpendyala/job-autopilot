@@ -63,6 +63,7 @@ const { getCompanyBrief } = require('../agents/company-brief');
 const { findOtherRoles } = require('../agents/other-roles');
 const { generateInterviewBrief } = require('../agents/interview-prep');
 const { researchSalary } = require('../agents/salary-researcher');
+const { analyzeApplicationPatterns } = require('../agents/rejection-analyzer');
 const { saveApplicationPackage, saveInterviewBrief, saveSalaryBrief } = require('../services/output-writer');
 const { syncToSheets, updateSheetStatus } = require('../services/sheets');
 
@@ -194,7 +195,7 @@ app.get('/api/applications/:id', (req, res) => {
     companyBrief: folder ? readFile(path.join(folder, 'company-brief.json')) : null,
     otherRoles: folder ? readFile(path.join(folder, 'other-roles.md')) : null,
     interviewPrep: folder ? readFile(path.join(folder, 'interview-prep.md')) : null,
-    salaryBrief: folder ? readFile(path.join(folder, 'salary-brief.json')) : null,
+    salaryBrief: folder ? readFile(path.join(folder, 'salary-brief.md')) : null,
   };
 
   res.json({ ...application, files });
@@ -444,7 +445,7 @@ app.post('/api/applications/:id/mark-applied', (req, res) => {
   const apps = getAllApplications(req.userId);
   const found = apps.find(a => a.id === req.params.id);
   if (!found) return res.status(404).json({ error: 'Not found' });
-  updateApplicationStatus(req.params.id, 'applied');
+  setApplicationApplied(req.params.id);
   res.json({ success: true });
 });
 
@@ -657,6 +658,13 @@ app.get('/api/admin/users', (req, res) => {
     });
 
   res.json({ users });
+});
+
+// --- Phase 8 endpoint ---
+
+app.get('/api/analyze-patterns', async (req, res) => {
+  const result = await analyzeApplicationPatterns(req.userId);
+  res.json(result);
 });
 
 // Global error handler — never sends HTML

@@ -10,6 +10,7 @@ import Settings from './pages/Settings'
 import ApprovalScreen from './pages/ApprovalScreen'
 import Outreach from './pages/Outreach'
 import Profile from './pages/Profile'
+import Insights from './components/Insights'
 import './styles.css'
 
 function ProfileGate({ onUpload }) {
@@ -138,6 +139,9 @@ export default function App() {
         )}
         {activePage === 'profile' && (
           <Profile addToast={addToast} />
+        )}
+        {activePage === 'insights' && (
+          <Insights />
         )}
       </main>
 

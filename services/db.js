@@ -18,7 +18,7 @@ function initDB() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS applications (
       id TEXT PRIMARY KEY,
-      url_hash TEXT,
+      url_hash TEXT UNIQUE,
       company TEXT,
       role TEXT,
       job_url TEXT,
@@ -94,6 +94,12 @@ function initDB() {
       notes TEXT
     );
   `);
+
+  try {
+    db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_url_hash ON applications(url_hash)').run()
+  } catch (_) {}
+
+  db.exec(`CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT)`);
 
   migrateAddUserId();
 }
@@ -353,6 +359,17 @@ function getOutreachStats(userId = 'default') {
   return { total: row.total || 0, sent, replied, replyRate };
 }
 
+function getMetadata(key) {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  const row = db.prepare('SELECT value FROM metadata WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+function setMetadata(key, value) {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  db.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)').run(key, String(value));
+}
+
 module.exports = {
   initDB, isDuplicate, saveApplication, getAllApplications, getApplicationsDueFollowUp,
   updateApplicationStatus, updateDriveUrl, getStats,
@@ -360,4 +377,5 @@ module.exports = {
   addToApprovalQueue, getApprovalQueue, updateApprovalStatus,
   addToApplyQueue, getApplyQueue, markApplied, setApplicationApplied, getApprovalStats,
   saveOutreach, getOutreach, updateOutreachStatus, getOutreachStats,
+  getMetadata, setMetadata,
 };

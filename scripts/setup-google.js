@@ -16,6 +16,7 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
 const REDIRECT_URI = 'http://localhost:8888/callback';
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/drive',
 ];

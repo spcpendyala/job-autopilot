@@ -1,6 +1,28 @@
 import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 
+// Extract keywords from job description that are missing in the resume
+function extractKeywords(jd, resume) {
+  if (!jd) return []
+  const resumeLower = (resume || '').toLowerCase()
+  // Common tech/skill keywords to look for
+  const patterns = [
+    /\b(SQL|Python|JavaScript|TypeScript|React|Node\.js|AWS|GCP|Azure|Kubernetes|Docker|Terraform|Salesforce|HubSpot|Tableau|PowerBI|Excel|Slack|Jira|Confluence|Asana|Notion|Looker|dbt|Airflow|Snowflake|BigQuery|Redshift|Stripe|NetSuite|Workday|SAP|Oracle)\b/gi,
+    /\b(OKRs?|KPIs?|SLA|SLO|RCA|P&L|COGS|ARR|MRR|NPS|CSAT|LTV|CAC|GTM|B2B|B2C|SaaS|SDLC|AGILE|SCRUM|KANBAN)\b/gi,
+  ]
+  const found = new Set()
+  for (const pattern of patterns) {
+    let m
+    while ((m = pattern.exec(jd)) !== null) {
+      const kw = m[0].toUpperCase()
+      if (!resumeLower.includes(m[0].toLowerCase())) {
+        found.add(kw)
+      }
+    }
+  }
+  return Array.from(found).slice(0, 10)
+}
+
 function ScoreDots({ score }) {
   if (score == null) return null
   const color = score >= 8 ? 'var(--green)' : score >= 6 ? 'var(--yellow)' : 'var(--red)'
@@ -206,7 +228,7 @@ export default function ApprovalScreen({ onBack, addToast }) {
               borderRadius: 'var(--radius)',
               fontSize: 13,
               lineHeight: 1.7,
-              maxHeight: 'calc(100vh - 280px)',
+              maxHeight: 'calc(100vh - 380px)',
               overflowY: 'auto',
               padding: '14px 16px',
               color: 'var(--text-2)',
@@ -215,6 +237,17 @@ export default function ApprovalScreen({ onBack, addToast }) {
           >
             {jdText.slice(0, 4000) || '(No job description saved)'}
           </div>
+
+          {item.verdict && (
+            <div style={{ marginTop: 14 }}>
+              <div className="section-label" style={{ marginBottom: 8, fontSize: 10 }}>MISSING KEYWORDS</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {extractKeywords(jdText, resume).map((kw, i) => (
+                  <span key={i} style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, color: 'var(--red)', fontSize: 11, padding: '2px 8px' }}>{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right — Resume + Cover Letter */}
