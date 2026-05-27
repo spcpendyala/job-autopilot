@@ -17,7 +17,18 @@
     "logs": "pm2 logs",
     "dev": "concurrently \"node api/server.js\" \"vite --config dashboard/vite.config.js\"",
     "dashboard": "vite --config dashboard/vite.config.js",
-    "migrate": "node scripts/migrate-to-multiuser.js"
+    "migrate": "node scripts/migrate-to-multiuser.js",
+    "test": "TEST_MODE=true TEST_DB_PATH=./data/test.autopilot.db TEST_BASE_URL=http://localhost:3002 jest tests/api --runInBand --forceExit",
+    "test:seed": "TEST_DB_PATH=./data/test.autopilot.db node tests/fixtures/seed.js",
+    "test:server": "TEST_MODE=true TEST_DB_PATH=./data/test.autopilot.db PORT=3002 node api/server.js",
+    "test:manual": "node tests/manual-checklist/run-checklist.js"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 15000,
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
   },
   "keywords": [],
   "author": "",
@@ -46,8 +57,11 @@
     "react-markdown": "^10.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.2.1",
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2",
     "vite": "^8.0.14"
   }
 }

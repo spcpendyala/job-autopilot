@@ -353,7 +353,11 @@ function ViewProfile({ profile, resumeContent, showFullResume, setShowFullResume
               </button>
               <button className="btn btn-ghost btn-sm" type="button" onClick={() => {
                 const blob = new Blob([resumeContent], { type: 'text/markdown' })
-                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'base-resume.md'; a.click()
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url; a.download = 'base-resume.md'
+                document.body.appendChild(a); a.click()
+                document.body.removeChild(a); URL.revokeObjectURL(url)
               }}>
                 Download .md
               </button>
@@ -752,10 +756,12 @@ export default function Profile({ addToast }) {
   const [saving, setSaving] = useState(false)
   const [resumeContent, setResumeContent] = useState('')
   const [showFullResume, setShowFullResume] = useState(false)
+  const [skillsGap, setSkillsGap] = useState(null)
 
   const loadProfile = () => {
     fetch('/api/profile').then(r => r.json()).then(p => { setProfile(p); setForm(p) }).catch(() => { setProfile({}); setForm({}) })
     fetch('/api/profile/resume').then(r => r.json()).then(d => setResumeContent(d.content || '')).catch(() => {})
+    fetch('/api/skills-gap').then(r => r.json()).then(setSkillsGap).catch(() => {})
   }
 
   useEffect(() => { loadProfile() }, [])
@@ -787,13 +793,33 @@ export default function Profile({ addToast }) {
 
   if (viewMode) {
     return (
-      <ViewProfile
-        profile={profile}
-        resumeContent={resumeContent}
-        showFullResume={showFullResume}
-        setShowFullResume={setShowFullResume}
-        onEdit={() => { setForm({ ...profile }); setViewMode(false) }}
-      />
+      <>
+        {skillsGap?.analyzed && skillsGap.skills?.length > 0 && (
+          <div style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 'var(--radius)', margin: '16px 32px 0', padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <span style={{ fontSize: 18, flexShrink: 0 }}>📊</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--yellow)', marginBottom: 6 }}>
+                Skills Gap Detected — {skillsGap.skills.length} skills appear frequently in jobs you're targeting
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {skillsGap.skills.slice(0, 8).map((s, i) => (
+                  <span key={i} style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.25)', borderRadius: 4, color: 'var(--yellow)', fontSize: 11, padding: '2px 8px' }}>
+                    {s.skill} ({s.frequency}×)
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 6 }}>Add these to your core skills to improve fit scores.</div>
+            </div>
+          </div>
+        )}
+        <ViewProfile
+          profile={profile}
+          resumeContent={resumeContent}
+          showFullResume={showFullResume}
+          setShowFullResume={setShowFullResume}
+          onEdit={() => { setForm({ ...profile }); setViewMode(false) }}
+        />
+      </>
     )
   }
 

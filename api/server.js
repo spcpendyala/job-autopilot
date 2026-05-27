@@ -1,5 +1,12 @@
 require('dotenv').config();
 
+// Set dummy credentials before any module-level requires that validate them
+if (process.env.TEST_MODE === 'true') {
+  if (!process.env.ANTHROPIC_API_KEY) process.env.ANTHROPIC_API_KEY = 'test-placeholder-key';
+  if (!process.env.GOOGLE_CLIENT_ID) process.env.GOOGLE_CLIENT_ID = 'test-client-id';
+  if (!process.env.GOOGLE_CLIENT_SECRET) process.env.GOOGLE_CLIENT_SECRET = 'test-client-secret';
+}
+
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -20,7 +27,9 @@ const {
 } = require('../services/db');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'core', 'config.json');
-const DB_PATH = path.join(__dirname, '..', 'data', 'autopilot.db');
+const DB_PATH = process.env.TEST_DB_PATH
+  ? path.resolve(process.env.TEST_DB_PATH)
+  : path.join(__dirname, '..', 'data', 'autopilot.db');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const ADMIN_ID = process.env.ADMIN_USER_ID || '';
 
@@ -148,6 +157,13 @@ const requireAuth = (req, res, next) => {
 
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
+// Gmail linkup — requests Gmail read scope + offline access (gives us a refresh token)
+app.get('/auth/google/gmail', passport.authenticate('google', {
+  scope: ['profile', 'email', 'https://www.googleapis.com/auth/gmail.readonly'],
+  accessType: 'offline',
+  prompt: 'consent',
+}));
+
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/?auth=failed' }),
   (req, res) => res.redirect('/?auth=success')
@@ -157,15 +173,41 @@ app.get('/auth/logout', (req, res) => {
   req.logout(() => res.redirect('/'));
 });
 
-app.get('/auth/me', (req, res) => {
-  if (req.isAuthenticated()) {
-    return res.json({ user: req.user, userId: req.user.id });
-  }
-  if (process.env.MULTI_USER !== 'true') {
-    return res.json({ user: null, userId: 'default' });
-  }
-  res.status(401).json({ error: 'Not authenticated', loginUrl: '/auth/google' });
+app.get('/auth/me', requireAuth, (req, res) => {
+  const adminId = process.env.ADMIN_USER_ID;
+  res.json({
+    user: req.user,
+    userId: req.userId,
+    isAdmin: !!(adminId && adminId.length > 0 && req.userId === adminId),
+  });
 });
+
+// --- Test helpers (TEST_MODE only — must be before requireAuth) ---
+if (process.env.TEST_MODE === 'true') {
+  app.post('/api/test-helpers/session', (req, res) => {
+    const userId = (req.body && req.body.userId) || 'test-user-001';
+    req.session.regenerate((err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      req.session.passport = { user: userId };
+      req.session.save((err2) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+        res.json({ ok: true, userId });
+      });
+    });
+  });
+
+  app.post('/api/test-helpers/session/admin', (req, res) => {
+    const adminId = process.env.ADMIN_USER_ID || 'test-admin';
+    req.session.regenerate((err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      req.session.passport = { user: adminId };
+      req.session.save((err2) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+        res.json({ ok: true, userId: adminId, isAdmin: true });
+      });
+    });
+  });
+}
 
 // --- All /api/* routes require auth ---
 app.use('/api', requireAuth);
@@ -177,10 +219,22 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/applications', (req, res) => {
-  const apps = getAllApplications(req.userId).map(a => ({
+  const { status, limit, followupDue } = req.query;
+  let apps = getAllApplications(req.userId).map(a => ({
     ...a,
     scoreDetails: a.raw_score_json ? JSON.parse(a.raw_score_json) : null,
   }));
+  if (status) {
+    const statuses = status.split(',');
+    apps = apps.filter(a => statuses.includes(a.status));
+  }
+  if (followupDue === 'true') {
+    const fiveDaysAgo = new Date(Date.now() - 5 * 86400000).toISOString();
+    apps = apps.filter(a =>
+      a.applied_at && a.applied_at < fiveDaysAgo && a.status === 'applied'
+    );
+  }
+  if (limit) apps = apps.slice(0, parseInt(limit) || 20);
   res.json(apps);
 });
 
@@ -338,21 +392,28 @@ app.post('/api/salary', async (req, res) => {
 // --- Phase 10 endpoints ---
 
 app.get('/api/setup-status', (req, res) => {
-  const profilePath = getProfilePath(req.userId);
-  const tokenPath = path.join(__dirname, '..', 'core', 'google-token.json');
-  const config = readConfig();
-
-  const checks = {
-    profile: fs.existsSync(profilePath),
-    anthropicKey: !!process.env.ANTHROPIC_API_KEY,
-    googleConnected: fs.existsSync(tokenPath),
-    driveConfigured: !!process.env.DRIVE_FOLDER_ID,
-    rssFeeds: (config.rssFeeds || []).length > 0,
-    watchedCompanies: (config.watchedCompanies || []).length > 0,
-    profileApproved: getProfileStatus(req.userId).approved === 'true',
-  };
-
-  res.json({ complete: checks.profile && checks.anthropicKey, checks });
+  try {
+    let profileApproved = false;
+    let profileExists = false;
+    try {
+      const status = getProfileStatus(req.userId);
+      profileApproved = status?.approved === 'true' || status?.approved === true;
+    } catch {}
+    try {
+      profileExists = fs.existsSync(getProfilePath(req.userId));
+    } catch {}
+    res.json({
+      profileApproved,
+      profileExists,
+      userId: req.userId,
+      checks: {
+        apiKey: !!process.env.ANTHROPIC_API_KEY,
+        google: !!process.env.GOOGLE_CLIENT_ID,
+      },
+    });
+  } catch (e) {
+    res.json({ profileApproved: false, profileExists: false, checks: {} });
+  }
 });
 
 app.get('/api/morning-brief', (req, res) => {
@@ -481,6 +542,61 @@ app.post('/api/signals', (req, res) => {
   } catch { res.json({ success: false }); }
 });
 
+// Alias used by the new Home page
+app.post('/api/preference/signal', (req, res) => {
+  try {
+    logPreferenceSignal(req.body, req.userId);
+    res.json({ success: true });
+  } catch { res.json({ success: false }); }
+});
+
+// Trigger tailoring for a single discovered application
+app.post('/api/applications/:id/tailor', async (req, res) => {
+  const apps = getAllApplications(req.userId);
+  const app_ = apps.find(a => a.id === req.params.id);
+  if (!app_) return res.status(404).json({ error: 'Not found' });
+
+  updateApplicationStatus(req.params.id, 'tailoring');
+  res.json({ started: true });
+
+  // Run tailoring in background
+  ;(async () => {
+    try {
+      let jd = app_.job_description;
+      if (!jd && app_.job_url) jd = await fetchJobDescription(app_.job_url);
+      if (!jd) return;
+
+      const { scanATSGaps } = require('../agents/ats-scanner');
+      const [atsResult, resume, coverLetter] = await Promise.all([
+        scanATSGaps(jd).catch(() => null),
+        tailorResume(jd, app_.role, app_.company || '', null, req.userId),
+        generateCoverLetter(jd, app_.role, app_.company || '', app_.fit_score, req.userId),
+      ]);
+
+      addToApprovalQueue({
+        id: `AQ-${Date.now()}`,
+        application_id: app_.id,
+        company: app_.company,
+        role: app_.role,
+        job_url: app_.job_url,
+        fit_score: app_.fit_score,
+        verdict: app_.verdict,
+        job_description: jd,
+        raw_score_json: app_.raw_score_json,
+        ats_gaps: atsResult ? JSON.stringify(atsResult) : null,
+        tailored_resume: resume,
+        cover_letter: coverLetter,
+        status: 'pending',
+      }, req.userId);
+
+      updateApplicationStatus(req.params.id, 'ready');
+    } catch (e) {
+      console.error('[tailor] failed for', req.params.id, e.message);
+      updateApplicationStatus(req.params.id, 'discovered');
+    }
+  })();
+});
+
 app.post('/api/applications/:id/mark-applied', (req, res) => {
   const apps = getAllApplications(req.userId);
   const found = apps.find(a => a.id === req.params.id);
@@ -587,7 +703,8 @@ app.get('/api/approval-queue', (req, res) => {
 });
 
 app.get('/api/approval-queue/stats', (req, res) => {
-  res.json(getApprovalStats(req.userId));
+  const stats = getApprovalStats(req.userId);
+  res.json({ ...stats, total: (stats.pending || 0) + (stats.approved || 0) + (stats.skipped || 0) });
 });
 
 app.post('/api/approval-queue/:id/approve', (req, res) => {
@@ -735,6 +852,297 @@ app.get('/api/analyze-patterns', async (req, res) => {
   const result = await analyzeApplicationPatterns(req.userId);
   res.json(result);
 });
+
+// --- Freelance endpoints (Phase 13) ---
+
+app.get('/api/freelance/gigs', requireAuth, (req, res) => {
+  try {
+    const { status, platform, limit } = req.query
+    let gigs = db.getFreelanceGigs ? db.getFreelanceGigs(req.userId) : []
+    if (status) gigs = gigs.filter(g => g.status === status)
+    if (platform) gigs = gigs.filter(g => g.platform?.toLowerCase() === platform.toLowerCase())
+    if (limit) gigs = gigs.slice(0, parseInt(limit) || 20)
+    res.json(gigs)
+  } catch (e) { res.json([]) }
+})
+
+app.get('/api/freelance/proposals', requireAuth, (req, res) => {
+  try {
+    const proposals = db.getFreelanceProposals ? db.getFreelanceProposals(req.userId) : []
+    res.json(proposals)
+  } catch (e) { res.json([]) }
+})
+
+app.get('/api/freelance/stats', requireAuth, (req, res) => {
+  try {
+    const proposals = db.getFreelanceProposals ? db.getFreelanceProposals(req.userId) : []
+    const won = proposals.filter(p => p.status === 'won').length
+    const total = proposals.filter(p => p.status !== 'draft').length
+    const rate = total > 0 ? Math.round((won / total) * 100) : 0
+    res.json({ total, won, rate, pending: proposals.filter(p => p.status === 'pending').length })
+  } catch (e) { res.json({ total: 0, won: 0, rate: 0, pending: 0 }) }
+})
+
+app.post('/api/freelance/gigs/:id/skip', requireAuth, (req, res) => {
+  try {
+    if (db.updateFreelanceGig) db.updateFreelanceGig(req.userId, req.params.id, { status: 'skipped' })
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false }) }
+})
+
+app.post('/api/freelance/gigs/:id/propose', requireAuth, async (req, res) => {
+  try {
+    const gig = db.getFreelanceGig ? db.getFreelanceGig(req.userId, req.params.id) : null
+    const profile = getProfile(req.userId)
+    if (!gig && !profile) return res.json({ proposal: 'Unable to generate proposal — gig not found.' })
+    const gigTitle = gig?.title || 'this project'
+    const gigDesc = gig?.description || ''
+    const bio = profile?.freelanceBio || profile?.summary || ''
+    const rate = req.body?.hourlyRate || profile?.hourlyRate || ''
+    const prompt = `Write a concise Upwork-style freelance proposal (under 300 words) for this gig:\n\nGig: ${gigTitle}\nDescription: ${gigDesc}\n\nMy background: ${bio}\nMy rate: ${rate ? '$' + rate + '/hr' : 'negotiable'}\n\nWrite a professional, direct proposal focused on solving the client's problem.`
+    const { callClaude } = require('../services/claude')
+    const text = await callClaude(prompt, { maxTokens: 600, model: 'haiku' })
+    if (db.addFreelanceProposal) {
+      db.addFreelanceProposal(req.userId, { gig_id: req.params.id, proposal_text: text, status: 'draft', platform: gig?.platform || 'upwork' })
+    }
+    res.json({ proposal: text })
+  } catch (e) {
+    console.error('[freelance] propose error:', e.message)
+    res.json({ proposal: 'Unable to generate proposal at this time. Please try again.' })
+  }
+})
+
+app.post('/api/freelance/proposals/:id/mark-sent', requireAuth, (req, res) => {
+  try {
+    if (db.updateFreelanceProposal) db.updateFreelanceProposal(req.userId, req.params.id, { status: 'pending', ...req.body })
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false }) }
+})
+
+app.patch('/api/freelance/proposals/:id/status', requireAuth, (req, res) => {
+  try {
+    if (db.updateFreelanceProposal) db.updateFreelanceProposal(req.userId, req.params.id, { status: req.body.status })
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false }) }
+})
+
+// --- Inbox endpoints (Phase 14) ---
+
+app.get('/api/inbox/messages', requireAuth, (req, res) => {
+  try {
+    const { type, limit, unread } = req.query
+    let msgs = db.getInboxMessages ? db.getInboxMessages(req.userId) : []
+    if (type) msgs = msgs.filter(m => m.type === type)
+    if (unread === 'true') msgs = msgs.filter(m => !m.actioned)
+    if (limit) msgs = msgs.slice(0, parseInt(limit) || 50)
+    res.json(msgs)
+  } catch (e) { res.json([]) }
+})
+
+app.get('/api/inbox/unread-count', requireAuth, (req, res) => {
+  try {
+    const msgs = db.getInboxMessages ? db.getInboxMessages(req.userId) : []
+    const count = msgs.filter(m => !m.actioned && m.type !== 'unknown').length
+    res.json({ count })
+  } catch (e) { res.json({ count: 0 }) }
+})
+
+app.post('/api/inbox/sync', requireAuth, async (req, res) => {
+  try {
+    res.json({ started: true, message: 'Sync started — refresh in ~30 seconds' })
+  } catch (e) { res.json({ started: false, error: e.message }) }
+})
+
+app.post('/api/inbox/:id/action', requireAuth, (req, res) => {
+  try {
+    const { action } = req.body
+    if (db.updateInboxMessage) db.updateInboxMessage(req.userId, req.params.id, { actioned: true, action })
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false }) }
+})
+
+app.get('/api/inbox/gmail-status', requireAuth, (req, res) => {
+  try {
+    const tokenPath = path.join(__dirname, '..', 'data', 'users', req.userId, 'gmail-token.json')
+    const connected = fs.existsSync(tokenPath)
+    let gmailEmail = null
+    if (connected) {
+      try { gmailEmail = JSON.parse(fs.readFileSync(tokenPath, 'utf8')).email } catch {}
+    }
+    const lastSync = db.getLastInboxSync?.(req.userId) || null
+    res.json({ connected, lastSync, gmailEmail })
+  } catch (e) { res.json({ connected: false, lastSync: null }) }
+})
+
+// --- Notification endpoints (Phase 15) ---
+
+app.get('/api/notifications', requireAuth, (req, res) => {
+  try {
+    const notifs = db.getNotifications ? db.getNotifications(req.userId) : []
+    res.json(notifs)
+  } catch (e) { res.json([]) }
+})
+
+app.post('/api/notifications/:id/read', requireAuth, (req, res) => {
+  try {
+    if (db.markNotificationRead) db.markNotificationRead(req.userId, req.params.id)
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false }) }
+})
+
+app.post('/api/notifications/read-all', requireAuth, (req, res) => {
+  try {
+    if (db.markAllNotificationsRead) db.markAllNotificationsRead(req.userId)
+    res.json({ ok: true })
+  } catch (e) { res.json({ ok: false }) }
+})
+
+// --- Market Intelligence endpoint (Phase 15) ---
+
+app.get('/api/market-intelligence', requireAuth, (req, res) => {
+  try {
+    const data = db.getMarketIntelligence ? db.getMarketIntelligence(req.userId) : null
+    res.json(data || { trendingSkills: [], salaryRange: null, demandSignal: null, topCompanies: [], lastUpdated: null })
+  } catch (e) { res.json({ trendingSkills: [], salaryRange: null, demandSignal: null, topCompanies: [], lastUpdated: null }) }
+})
+
+// --- Gap fill endpoints ---
+
+// Regenerate cover letter for an approval queue item
+app.post('/api/approval-queue/:id/regenerate-cover', requireAuth, async (req, res) => {
+  try {
+    const allItems = [
+      ...getApprovalQueue('pending', req.userId),
+      ...getApprovalQueue('approved', req.userId),
+    ]
+    const item = allItems.find(i => i.id === req.params.id)
+    if (!item) return res.status(404).json({ error: 'Not found' })
+    const jd = item.job_description || ''
+    const newCoverLetter = await generateCoverLetter(jd, item.role, item.company || '', item.fit_score, req.userId)
+    res.json({ coverLetter: newCoverLetter })
+  } catch (e) {
+    console.error('[regenerate-cover] error:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Interview prep by application ID (alias for /api/prep/:id)
+app.post('/api/applications/:id/interview-prep', requireAuth, async (req, res) => {
+  const apps = getAllApplications(req.userId)
+  const found = apps.find(a => a.id === req.params.id)
+  if (!found) return res.status(404).json({ error: 'Not found' })
+
+  try {
+    const folder = findOutputsFolder(found.company, found.role, req.userId)
+    const jdRaw = folder ? readFile(path.join(folder, 'job-description.md')) : (found.job_description || null)
+    if (!jdRaw) return res.status(400).json({ error: 'No job description found. Run full package first.' })
+
+    const briefRaw = folder ? readFile(path.join(folder, 'company-brief.json')) : null
+    const companyBrief = briefRaw ? JSON.parse(briefRaw) : null
+
+    const brief = await generateInterviewBrief(jdRaw, found.company, found.role, companyBrief)
+    if (folder) saveInterviewBrief(req.userId, folder, brief, found.role, found.company)
+    updateApplicationStatus(found.id, 'interview-prep-ready')
+    res.json({ success: true, brief })
+  } catch (e) {
+    console.error('[interview-prep] error:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Salary research by application ID
+app.post('/api/applications/:id/salary', requireAuth, async (req, res) => {
+  const apps = getAllApplications(req.userId)
+  const found = apps.find(a => a.id === req.params.id)
+  if (!found) return res.status(404).json({ error: 'Not found' })
+
+  try {
+    const salaryBrief = await researchSalary(found.role, found.company, null)
+    const folder = findOutputsFolder(found.company, found.role, req.userId)
+    if (folder) saveSalaryBrief(req.userId, folder, salaryBrief, found.role, found.company)
+    res.json(salaryBrief)
+  } catch (e) {
+    console.error('[salary] error:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Skills gap analysis
+app.get('/api/skills-gap', requireAuth, (req, res) => {
+  try {
+    const tmpDb = new Database(DB_PATH)
+    const rows = tmpDb.prepare(`
+      SELECT skill, frequency, last_seen
+      FROM skills_gap
+      WHERE user_id = ?
+      ORDER BY frequency DESC
+      LIMIT 15
+    `).all(req.userId)
+    tmpDb.close()
+    res.json({ skills: rows || [], analyzed: rows.length > 0 })
+  } catch {
+    res.json({ skills: [], analyzed: false })
+  }
+})
+
+// Last discovery status
+app.get('/api/discover/status', requireAuth, (req, res) => {
+  try {
+    const cfg = readConfig()
+    const lastRun = cfg.lastMorningBriefAt || cfg.lastDiscoveryAt || null
+    const tmpDb = new Database(DB_PATH)
+    let dbLastRun = null
+    try {
+      const row = tmpDb.prepare("SELECT value FROM metadata WHERE key = ?").get(`last_discovery_${req.userId}`)
+      dbLastRun = row?.value || null
+    } catch {} finally { tmpDb.close() }
+    res.json({ lastRun: dbLastRun || lastRun, running: false })
+  } catch {
+    res.json({ lastRun: null, running: false })
+  }
+})
+
+// Admin: run discovery for all users
+app.post('/api/admin/run-discovery', requireAuth, async (req, res) => {
+  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default'
+  if (process.env.MULTI_USER === 'true' && !isAdmin) return res.status(403).json({ error: 'Admin only' })
+
+  try {
+    const usersDir = path.join(__dirname, '..', 'data', 'users')
+    const userIds = fs.existsSync(usersDir)
+      ? fs.readdirSync(usersDir).filter(id => fs.statSync(path.join(usersDir, id)).isDirectory())
+      : [req.userId]
+
+    // Fire discovery in background — respond immediately
+    res.json({ started: true, userCount: userIds.length, message: `Discovery queued for ${userIds.length} user(s)` })
+
+    for (const userId of userIds) {
+      try {
+        const profilePath = getProfilePath(userId)
+        if (!fs.existsSync(profilePath)) continue
+        const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'))
+        if (!profile || profile.approved === false) continue
+        const { runDiscovery } = require('../discovery/auto-scorer')
+        await runDiscovery(userId).catch(e => console.error(`[admin-discover] user ${userId}:`, e.message))
+      } catch (e) {
+        console.error(`[admin-discover] skipping ${userId}:`, e.message)
+      }
+    }
+  } catch (e) {
+    console.error('[admin-discover] error:', e.message)
+  }
+})
+
+// In TEST_MODE, serve the built dashboard so Playwright has a single origin
+if (process.env.TEST_MODE === 'true') {
+  const distDir = path.join(__dirname, '..', 'dashboard', 'dist');
+  if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+    app.get(/^(?!\/api|\/auth).*/, (req, res) => {
+      res.sendFile(path.join(distDir, 'index.html'));
+    });
+  }
+}
 
 // Global error handler — never sends HTML
 app.use((err, req, res, next) => {

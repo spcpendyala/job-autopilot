@@ -1,189 +1,162 @@
 import { useState, useEffect } from 'react'
+import { UserProvider, useUser } from './UserContext'
+import { ToastProvider, useToast } from './components/Toast'
 import Sidebar from './components/Sidebar'
-import Toast from './components/Toast'
+import SignInScreen from './components/SignInScreen'
+import Spinner from './components/Spinner'
 import Onboarding from './components/Onboarding'
-import AuthGate from './components/AuthGate'
-import MorningBrief from './pages/MorningBrief'
+import Home from './pages/Home'
 import PipelinePage from './pages/Pipeline'
 import FindJob from './pages/FindJob'
 import Settings from './pages/Settings'
 import ApprovalScreen from './pages/ApprovalScreen'
 import Outreach from './pages/Outreach'
 import Profile from './pages/Profile'
-import Insights from './components/Insights'
 import AdminDashboard from './pages/AdminDashboard'
+import Freelance from './pages/Freelance'
+import Inbox from './pages/Inbox'
+import { api } from './lib/api'
 import './styles.css'
 
-function ProfileGate({ onUpload }) {
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,8,8,0.95)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
-      <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 48, maxWidth: 440, width: '100%', textAlign: 'center' }}>
-        <div style={{ fontSize: 48, marginBottom: 20 }}>🚀</div>
-        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Welcome to Job AutoPilot</h1>
-        <p style={{ color: 'var(--text-2)', fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
-          Upload your resumes to get started. We'll build your profile automatically using Claude.
-        </p>
-        <button className="btn" onClick={onUpload} style={{ width: '100%', padding: '14px 0', fontSize: 16, marginBottom: 16 }}>
-          Upload Resumes →
-        </button>
-        <div style={{ color: 'var(--text-3)', fontSize: 13 }}>
-          Have a profile already?{' '}
-          <span style={{ color: 'var(--text-2)', cursor: 'pointer', textDecoration: 'underline' }} onClick={onUpload}>
-            Import Profile
-          </span>
-        </div>
+function AppShell() {
+  const { user, isAdmin, loading } = useUser()
+  const { toast } = useToast()
+
+  const [page, setPage]           = useState('home')
+  const [pageParam, setPageParam] = useState(null)
+  const [onboarding, setOnboarding] = useState(false)
+  const [queueCount, setQueueCount] = useState(0)
+  const [inboxCount, setInboxCount] = useState(0)
+
+  const navigate = (target) => {
+    const [p, param] = (target || '').split('?')
+    setPage(p)
+    setPageParam(param || null)
+    window.scrollTo(0, 0)
+  }
+
+  useEffect(() => {
+    const titles = {
+      home: 'Home — Job AutoPilot',
+      pipeline: 'Pipeline — Job AutoPilot',
+      'find-job': 'Find a Job — Job AutoPilot',
+      inbox: 'Inbox — Job AutoPilot',
+      freelance: 'Freelance — Job AutoPilot',
+      profile: 'Profile — Job AutoPilot',
+      settings: 'Settings — Job AutoPilot',
+      admin: 'Admin — Job AutoPilot',
+      approval: 'Review — Job AutoPilot',
+    }
+    document.title = titles[page] || 'Job AutoPilot'
+  }, [page])
+
+  useEffect(() => {
+    if (!user) return
+    api('/api/setup-status')
+      .then(d => { if (d && !d.profileApproved) setOnboarding(true) })
+      .catch(() => {})
+  }, [user])
+
+  useEffect(() => {
+    if (!user) return
+    const refresh = () => {
+      api('/api/approval-queue/stats').then(d => setQueueCount(d?.pending || 0)).catch(() => {})
+      api('/api/inbox/unread-count').then(d => setInboxCount(d?.count || 0)).catch(() => {})
+    }
+    refresh()
+    const t = setInterval(refresh, 60000)
+    return () => clearInterval(t)
+  }, [user])
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+        <Spinner size={28} />
       </div>
+    )
+  }
+
+  if (!user) return <SignInScreen />
+
+  if (onboarding) {
+    return (
+      <Onboarding
+        onComplete={() => {
+          setOnboarding(false)
+          navigate('home')
+        }}
+        addToast={toast}
+      />
+    )
+  }
+
+  const renderPage = () => {
+    switch (page) {
+      case 'home':
+        return <Home navigate={navigate} user={user} addToast={toast} />
+      case 'approval':
+        return (
+          <ApprovalScreen
+            approvalId={pageParam}
+            onBack={() => navigate('home')}
+            addToast={toast}
+          />
+        )
+      case 'pipeline':
+        return <PipelinePage navigate={navigate} addToast={toast} />
+      case 'find-job':
+        return (
+          <FindJob
+            prefillUrl={pageParam ? decodeURIComponent(pageParam.replace('url=', '')) : ''}
+            onNavigatePipeline={() => navigate('pipeline')}
+            addToast={toast}
+          />
+        )
+      case 'profile':
+        return <Profile navigate={navigate} addToast={toast} />
+      case 'settings':
+        return <Settings navigate={navigate} addToast={toast} />
+      case 'outreach':
+        return <Outreach addToast={toast} />
+      case 'admin':
+        return <AdminDashboard navigate={navigate} addToast={toast} />
+      case 'inbox':
+        return <Inbox navigate={navigate} user={user} />
+      case 'freelance':
+        return <Freelance navigate={navigate} user={user} />
+      default:
+        return (
+          <div style={{ padding: 40, color: 'var(--text-2)' }}>
+            <h2 style={{ color: 'var(--text)', marginBottom: 8 }}>{page}</h2>
+            <p style={{ fontSize: 14 }}>Page not found.</p>
+          </div>
+        )
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+      <Sidebar
+        active={page}
+        navigate={navigate}
+        isAdmin={isAdmin}
+        queueCount={queueCount}
+        inboxCount={inboxCount}
+        user={user}
+      />
+      <main style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
+        {renderPage()}
+      </main>
     </div>
   )
 }
 
 export default function App() {
-  const [activePage, setActivePage] = useState('home')
-  const [setupStatus, setSetupStatus] = useState(null)
-  const [morningBrief, setMorningBrief] = useState(null)
-  const [toasts, setToasts] = useState([])
-  const [showOnboarding, setShowOnboarding] = useState(false)
-  const [showProfileGate, setShowProfileGate] = useState(false)
-  const [prefillUrl, setPrefillUrl] = useState('')
-  const [pendingApprovals, setPendingApprovals] = useState(0)
-  const [pendingQueue, setPendingQueue] = useState([])
-
-  const addToast = (message, type = 'success') => {
-    const id = Date.now()
-    setToasts(t => [...t, { id, message, type }])
-    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000)
-  }
-
-  const removeToast = (id) => setToasts(t => t.filter(x => x.id !== id))
-
-  const refreshMorningBrief = (force = false) =>
-    fetch(`/api/morning-brief${force ? '?refresh=true' : ''}`)
-      .then(r => r.json())
-      .then(setMorningBrief)
-      .catch(() => {})
-
-  const refreshPendingApprovals = () => {
-    fetch('/api/approval-queue/stats')
-      .then(r => r.json())
-      .then(d => setPendingApprovals(d.pending || 0))
-      .catch(() => {})
-    fetch('/api/approval-queue')
-      .then(r => r.json())
-      .then(d => setPendingQueue(Array.isArray(d) ? d : []))
-      .catch(() => setPendingQueue([]))
-  }
-
-  useEffect(() => {
-    fetch('/api/setup-status')
-      .then(r => r.json())
-      .then(data => {
-        setSetupStatus(data)
-        if (!data.complete) {
-          setShowOnboarding(true)
-        } else if (!data.profileApproved) {
-          setShowProfileGate(true)
-        }
-      })
-      .catch(() => {})
-
-    refreshMorningBrief()
-    refreshPendingApprovals()
-  }, [])
-
-  // Re-check pending approvals when navigating to relevant pages
-  useEffect(() => {
-    if (activePage === 'home' || activePage === 'approval') {
-      refreshPendingApprovals()
-    }
-  }, [activePage])
-
-  const navigateToFind = (url = '') => {
-    setPrefillUrl(url)
-    setActivePage('find')
-  }
-
   return (
-    <AuthGate>
-    <div className="app-layout">
-      <Sidebar
-        activePage={activePage}
-        setActivePage={setActivePage}
-        morningBrief={morningBrief}
-        pendingApprovals={pendingApprovals}
-      />
-      <main className="app-main">
-        {activePage === 'home' && (
-          <MorningBrief
-            brief={morningBrief}
-            pendingApprovals={pendingApprovals}
-            pendingQueue={pendingQueue}
-            onNavigate={setActivePage}
-            onQuickApply={navigateToFind}
-            addToast={addToast}
-            refreshBrief={() => refreshMorningBrief(true)}
-          />
-        )}
-        {activePage === 'approval' && (
-          <ApprovalScreen
-            onBack={() => { refreshPendingApprovals(); setActivePage('home') }}
-            addToast={addToast}
-          />
-        )}
-        {activePage === 'pipeline' && (
-          <PipelinePage addToast={addToast} />
-        )}
-        {activePage === 'outreach' && (
-          <Outreach addToast={addToast} />
-        )}
-        {activePage === 'find' && (
-          <FindJob
-            prefillUrl={prefillUrl}
-            onNavigatePipeline={() => setActivePage('pipeline')}
-            addToast={addToast}
-          />
-        )}
-        {activePage === 'settings' && (
-          <Settings addToast={addToast} />
-        )}
-        {activePage === 'profile' && (
-          <Profile addToast={addToast} />
-        )}
-        {activePage === 'insights' && (
-          <Insights />
-        )}
-        {activePage === 'admin' && <AdminDashboard addToast={addToast} />}
-      </main>
-
-      {/* Profile gate: shown when profile not yet approved */}
-      {showProfileGate && !showOnboarding && (
-        <ProfileGate
-          onUpload={() => {
-            setShowProfileGate(false)
-            setActivePage('profile')
-          }}
-        />
-      )}
-
-      {showOnboarding && (
-        <Onboarding
-          setupStatus={setupStatus}
-          onComplete={() => {
-            setShowOnboarding(false)
-            fetch('/api/setup-status')
-              .then(r => r.json())
-              .then(data => {
-                setSetupStatus(data)
-                if (!data.profileApproved) setShowProfileGate(true)
-              })
-              .catch(() => {})
-            refreshMorningBrief()
-          }}
-          addToast={addToast}
-        />
-      )}
-
-      <Toast toasts={toasts} removeToast={removeToast} />
-    </div>
-    </AuthGate>
+    <UserProvider>
+      <ToastProvider>
+        <AppShell />
+      </ToastProvider>
+    </UserProvider>
   )
 }

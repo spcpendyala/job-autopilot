@@ -8,7 +8,7 @@ async function synthesizeProfile(resumeTexts, userId = 'default') {
 
   const combinedText = resumeTexts
     .slice(0, 6)
-    .map((text, i) => `===RESUME ${i + 1}===\n\n${text.slice(0, 3000)}`)
+    .map((text, i) => `===RESUME ${i + 1}===\n\n${text.slice(0, 2500)}`)
     .join('\n\n');
 
   const prompt = `You are a professional resume analyst. Analyze these ${n} resumes from the same candidate.
@@ -72,13 +72,36 @@ Return ONLY valid JSON with this exact structure (no extra commentary):
   "synthesisNotes": "What you found across the resumes and key decisions made"
 }`;
 
-  const raw = await callClaude(prompt, { tier: 'quality', maxTokens: 4000, useCache: false });
+  const raw = await callClaude(prompt, { tier: 'quality', maxTokens: 8000, useCache: false });
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`Failed to parse synthesis response: ${raw}`);
+    // Response may be truncated — extract the profile object and regenerate baseResume separately
+    console.warn('[profile-synthesizer] JSON parse failed, attempting partial extraction...');
+    const profileMatch = raw.match(/"profile"\s*:\s*(\{[\s\S]+)/);
+    if (!profileMatch) throw new Error(`Failed to parse synthesis response: ${raw.slice(0, 500)}`);
+
+    // Close any unclosed braces to make it parseable
+    let fragment = profileMatch[1];
+    let opens = (fragment.match(/\{/g) || []).length;
+    let closes = (fragment.match(/\}/g) || []).length;
+    while (closes < opens) { fragment += '}'; closes++; }
+    // Remove trailing comma/bracket artifacts
+    fragment = fragment.replace(/,\s*$/, '').replace(/,(\s*[\}\]])/g, '$1');
+
+    let profile;
+    try { profile = JSON.parse(fragment); }
+    catch { throw new Error(`Failed to parse synthesis response: ${raw.slice(0, 500)}`); }
+
+    // Generate a base resume separately since it was cut off
+    const resumePrompt = `Write a professional markdown resume for this candidate:
+${JSON.stringify({ name: profile.name, summary: profile.summary, experience: profile.experience, education: profile.education, coreSkills: profile.coreSkills }, null, 2)}
+
+Return only the markdown resume (no JSON wrapper).`;
+    const baseResume = await callClaude(resumePrompt, { tier: 'quality', maxTokens: 3000, useCache: false });
+    parsed = { profile, baseResume, synthesisNotes: 'Profile recovered from partial synthesis response.' };
   }
 
   // Write profile to per-user directory

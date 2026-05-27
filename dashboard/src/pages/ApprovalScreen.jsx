@@ -95,8 +95,12 @@ export default function ApprovalScreen({ onBack, addToast }) {
   const [idx, setIdx] = useState(0)
   const [resume, setResume] = useState('')
   const [coverLetter, setCoverLetter] = useState('')
+  const [origResume, setOrigResume] = useState('')
+  const [origCoverLetter, setOrigCoverLetter] = useState('')
   const [approving, setApproving] = useState(false)
   const [skipping, setSkipping] = useState(false)
+  const [regenCover, setRegenCover] = useState(false)
+  const [rightTab, setRightTab] = useState('resume')
 
   const load = () =>
     fetch('/api/approval-queue')
@@ -106,6 +110,8 @@ export default function ApprovalScreen({ onBack, addToast }) {
         if (d.length > 0) {
           setResume(d[0].tailored_resume || '')
           setCoverLetter(d[0].cover_letter || '')
+          setOrigResume(d[0].tailored_resume || '')
+          setOrigCoverLetter(d[0].cover_letter || '')
           setIdx(0)
         }
       })
@@ -120,6 +126,27 @@ export default function ApprovalScreen({ onBack, addToast }) {
     setIdx(i)
     setResume(items[i].tailored_resume || '')
     setCoverLetter(items[i].cover_letter || '')
+    setOrigResume(items[i].tailored_resume || '')
+    setOrigCoverLetter(items[i].cover_letter || '')
+    setRightTab('resume')
+  }
+
+  const regenerateCover = async () => {
+    if (!item) return
+    setRegenCover(true)
+    try {
+      const r = await fetch(`/api/approval-queue/${item.id}/regenerate-cover`, { method: 'POST' })
+      const d = await r.json()
+      if (d.error) throw new Error(d.error)
+      setCoverLetter(d.coverLetter)
+      setOrigCoverLetter(d.coverLetter)
+      setRightTab('cover')
+      addToast('Cover letter regenerated', 'success')
+    } catch (err) {
+      addToast(err.message, 'error')
+    } finally {
+      setRegenCover(false)
+    }
   }
 
   const approve = async () => {
@@ -175,6 +202,8 @@ export default function ApprovalScreen({ onBack, addToast }) {
 
   const jdText = item.job_description || ''
   const scoreData = item.fit_score
+  const scoreDetails = item.raw_score_json ? (() => { try { return JSON.parse(item.raw_score_json) } catch { return null } })() : null
+  const missingKws = extractKeywords(jdText, resume)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -197,8 +226,8 @@ export default function ApprovalScreen({ onBack, addToast }) {
           {idx + 1} of {items.length} pending
         </span>
         <div style={{ display: 'flex', gap: 4 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => goTo(idx - 1)} disabled={idx === 0}>‹</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => goTo(idx + 1)} disabled={idx === items.length - 1}>›</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => goTo(idx - 1)} disabled={idx === 0}>← Prev</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => goTo(idx + 1)} disabled={idx === items.length - 1}>Next →</button>
         </div>
         <button className="btn btn-ghost btn-sm" onClick={skip} disabled={skipping} style={{ color: 'var(--text-2)' }}>
           {skipping ? '...' : 'Skip'}
@@ -210,9 +239,9 @@ export default function ApprovalScreen({ onBack, addToast }) {
 
       {/* Split screen */}
       <div className="approval-layout">
-        {/* Left — Job */}
+        {/* Left — Job analysis */}
         <div className="approval-pane">
-          <div className="section-label" style={{ marginBottom: 12 }}>Job Description</div>
+          <div className="section-label" style={{ marginBottom: 12 }}>Job Match Analysis</div>
 
           {item.fit_score != null && (
             <div style={{ marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -221,48 +250,110 @@ export default function ApprovalScreen({ onBack, addToast }) {
             </div>
           )}
 
-          <div
-            style={{
-              background: 'var(--bg)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)',
-              fontSize: 13,
-              lineHeight: 1.7,
-              maxHeight: 'calc(100vh - 380px)',
-              overflowY: 'auto',
-              padding: '14px 16px',
-              color: 'var(--text-2)',
-              whiteSpace: 'pre-wrap',
-            }}
-          >
-            {jdText.slice(0, 4000) || '(No job description saved)'}
-          </div>
+          {/* Why you match */}
+          {scoreDetails?.strengths?.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div className="section-label" style={{ marginBottom: 8, fontSize: 10, color: 'var(--green)' }}>WHY YOU MATCH</div>
+              <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--text-2)', fontSize: 13, lineHeight: 1.7 }}>
+                {scoreDetails.strengths.slice(0, 4).map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
+            </div>
+          )}
 
-          {item.verdict && (
-            <div style={{ marginTop: 14 }}>
-              <div className="section-label" style={{ marginBottom: 8, fontSize: 10 }}>MISSING KEYWORDS</div>
+          {/* ATS keywords to add */}
+          {missingKws.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div className="section-label" style={{ marginBottom: 8, fontSize: 10 }}>ATS KEYWORDS TO ADD</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {extractKeywords(jdText, resume).map((kw, i) => (
+                {missingKws.map((kw, i) => (
                   <span key={i} style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, color: 'var(--red)', fontSize: 11, padding: '2px 8px' }}>{kw}</span>
                 ))}
               </div>
             </div>
           )}
+
+          {/* Tailoring tips */}
+          {scoreDetails?.gaps?.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div className="section-label" style={{ marginBottom: 8, fontSize: 10, color: 'var(--yellow)' }}>TAILORING TIPS</div>
+              <ol style={{ margin: 0, paddingLeft: 16, color: 'var(--text-2)', fontSize: 13, lineHeight: 1.7 }}>
+                {scoreDetails.gaps.slice(0, 4).map((g, i) => <li key={i}>{g}</li>)}
+              </ol>
+            </div>
+          )}
+
+          {/* Job description (collapsed) */}
+          <div className="section-label" style={{ marginBottom: 8, fontSize: 10, marginTop: 4 }}>JOB DESCRIPTION</div>
+          <div
+            style={{
+              background: 'var(--bg)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              fontSize: 12,
+              lineHeight: 1.6,
+              maxHeight: 260,
+              overflowY: 'auto',
+              padding: '12px 14px',
+              color: 'var(--text-2)',
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {jdText.slice(0, 3000) || '(No job description saved)'}
+          </div>
         </div>
 
-        {/* Right — Resume + Cover Letter */}
+        {/* Right — Resume + Cover Letter tabs */}
         <div className="approval-pane" style={{ borderRight: 'none' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div className="section-label">Your Resume</div>
-            <span style={{ color: 'var(--text-3)', fontSize: 11 }}>Click text to edit</span>
+          {/* Tab switcher */}
+          <div style={{ display: 'flex', gap: 0, marginBottom: 14, borderBottom: '1px solid var(--border)' }}>
+            {[{ id: 'resume', label: 'Resume' }, { id: 'cover', label: 'Cover Letter' }].map(t => (
+              <button
+                key={t.id}
+                onClick={() => setRightTab(t.id)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 13, fontWeight: rightTab === t.id ? 600 : 400,
+                  color: rightTab === t.id ? 'var(--text)' : 'var(--text-3)',
+                  padding: '6px 16px 10px',
+                  borderBottom: rightTab === t.id ? '2px solid var(--green)' : '2px solid transparent',
+                  marginBottom: -1,
+                }}
+              >{t.label}</button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <span style={{ color: 'var(--text-3)', fontSize: 11, alignSelf: 'center', paddingRight: 4 }}>Click text to edit</span>
           </div>
 
-          <EditableText value={resume} onChange={setResume} />
+          {rightTab === 'resume' && (
+            <>
+              <EditableText value={resume} onChange={setResume} />
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setResume(origResume)} disabled={resume === origResume}>
+                  Reset to AI Version
+                </button>
+                <span style={{ color: 'var(--text-3)', fontSize: 11, alignSelf: 'center' }}>
+                  {resume.length} chars
+                </span>
+              </div>
+            </>
+          )}
 
-          <div style={{ marginTop: 20 }}>
-            <div className="section-label" style={{ marginBottom: 10 }}>Cover Letter</div>
-            <EditableText value={coverLetter} onChange={setCoverLetter} />
-          </div>
+          {rightTab === 'cover' && (
+            <>
+              <EditableText value={coverLetter} onChange={setCoverLetter} />
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                <button className="btn btn-ghost btn-sm" onClick={regenerateCover} disabled={regenCover}>
+                  {regenCover ? <><span className="spinner" style={{ width: 12, height: 12, marginRight: 6 }} />Regenerating...</> : '↺ Regenerate'}
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setCoverLetter(origCoverLetter)} disabled={coverLetter === origCoverLetter}>
+                  Reset to AI Version
+                </button>
+                <span style={{ color: 'var(--text-3)', fontSize: 11, alignSelf: 'center' }}>
+                  {coverLetter.length} chars
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

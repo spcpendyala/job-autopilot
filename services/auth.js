@@ -24,6 +24,19 @@ passport.use(new GoogleStrategy({
     }, null, 2))
   }
 
+  // Save Gmail token when offline access was granted (refresh token present)
+  if (refreshToken) {
+    try {
+      fs.writeFileSync(path.join(userDir, 'gmail-token.json'), JSON.stringify({
+        accessToken, refreshToken, savedAt: new Date().toISOString(),
+        email: profile.emails?.[0]?.value || '',
+      }, null, 2))
+      console.log(`[auth] Gmail token saved for user ${userId}`)
+    } catch (e) {
+      console.error('[auth] Failed to save Gmail token:', e.message)
+    }
+  }
+
   return done(null, {
     id: userId,
     name: profile.displayName,

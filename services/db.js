@@ -4,7 +4,9 @@ const fs = require('fs');
 const path = require('path');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DATA_DIR, 'autopilot.db');
+const DB_PATH = process.env.TEST_DB_PATH
+  ? path.resolve(process.env.TEST_DB_PATH)
+  : path.join(DATA_DIR, 'autopilot.db');
 
 let db;
 

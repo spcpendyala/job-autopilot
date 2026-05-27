@@ -16,9 +16,14 @@ export default function Settings({ addToast }) {
   const [savingPrefs, setSavingPrefs] = useState(false)
   const [setupStatus, setSetupStatus] = useState(null)
 
+  const [gmailStatus, setGmailStatus] = useState(null)
+  const [discoverStatus, setDiscoverStatus] = useState(null)
+
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(setConfig).catch(() => setConfig({}))
     fetch('/api/setup-status').then(r => r.json()).then(setSetupStatus).catch(() => {})
+    fetch('/api/inbox/gmail-status', { credentials: 'include' }).then(r => r.json()).then(setGmailStatus).catch(() => {})
+    fetch('/api/discover/status').then(r => r.json()).then(setDiscoverStatus).catch(() => {})
   }, [])
 
   const patchConfig = async (patch) => {
@@ -74,11 +79,12 @@ export default function Settings({ addToast }) {
       {/* Connections */}
       <Section title="Connections">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ fontSize: 13, color: '#ccc', minWidth: 120 }}>Gmail</span>
-            {setupStatus?.checks?.googleConnected
-              ? <span style={{ color: 'var(--green)', fontSize: 13 }}>Connected</span>
-              : <span style={{ color: '#ef4444', fontSize: 13 }}>Not connected — run <code style={{ background: '#1a1a1a', padding: '2px 6px', borderRadius: 4 }}>npm run setup-google</code> on the server</span>}
+            {gmailStatus?.connected
+              ? <span style={{ color: 'var(--green)', fontSize: 13 }}>✓ Connected{gmailStatus.gmailEmail ? ` — ${gmailStatus.gmailEmail}` : ''}</span>
+              : <><span style={{ color: 'var(--text-3)', fontSize: 13, marginRight: 10 }}>Not connected</span>
+                  <a href="/auth/google/gmail" className="btn btn-ghost btn-sm">Connect Gmail →</a></>}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
             <span style={{ fontSize: 13, color: '#ccc', minWidth: 120 }}>Google Drive</span>
@@ -168,9 +174,9 @@ export default function Settings({ addToast }) {
           <button className="btn" onClick={runDiscover} disabled={discovering}>
             {discovering ? <><span className="spinner" style={{ marginRight: 8 }} />Running...</> : '🔍 Run Discovery Now'}
           </button>
-          {config.lastMorningBriefAt && (
+          {(discoverStatus?.lastRun || config.lastMorningBriefAt) && (
             <span style={{ color: 'var(--text-3)', fontSize: 13 }}>
-              Last run: {new Date(config.lastMorningBriefAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              Last run: {new Date(discoverStatus?.lastRun || config.lastMorningBriefAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
           <button className="btn btn-ghost" onClick={savePreferences} disabled={savingPrefs} style={{ marginLeft: 'auto' }}>

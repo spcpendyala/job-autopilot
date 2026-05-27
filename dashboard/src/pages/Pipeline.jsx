@@ -21,18 +21,18 @@ function daysSince(dateStr) {
 }
 
 const COLUMNS = [
-  { id: 'discovered', label: 'DISCOVERED', color: 'var(--text-2)',  statuses: ['discovered'] },
-  { id: 'approved',   label: 'APPROVED',   color: 'var(--yellow)',  statuses: ['approved'] },
+  { id: 'discovered', label: 'DISCOVERED', color: 'var(--text-2)',  statuses: ['discovered', 'selected'] },
+  { id: 'tailoring',  label: 'TAILORING',  color: 'var(--yellow)',  statuses: ['tailoring', 'ready', 'approved'] },
   { id: 'applied',    label: 'APPLIED',    color: 'var(--blue)',    statuses: ['applied'] },
   { id: 'responded',  label: 'RESPONDED',  color: 'var(--yellow)',  statuses: ['responded', 'interview-prep-ready'] },
   { id: 'interview',  label: 'INTERVIEW',  color: 'var(--green)',   statuses: ['interview'] },
   { id: 'offer',      label: 'OFFER',      color: 'var(--purple)',  statuses: ['offer'] },
-  { id: 'rejected',   label: 'REJECTED',   color: 'var(--red)',     statuses: ['rejected'] },
+  { id: 'rejected',   label: 'REJECTED',   color: 'var(--red)',     statuses: ['rejected', 'closed'] },
 ]
 
 function KanbanCard({ app, applyItems, onClick, addToast }) {
   const days = daysSince(app.created_at)
-  const isApproved = app.status === 'approved'
+  const isApproved = ['approved', 'ready'].includes(app.status)
   const applyItem = isApproved ? applyItems?.find(i => i.application_id === app.id) : null
   const [marking, setMarking] = useState(false)
 
@@ -87,12 +87,22 @@ function KanbanCard({ app, applyItems, onClick, addToast }) {
   )
 }
 
+function sourceLabel(url) {
+  if (!url) return '—'
+  try {
+    const host = new URL(url).hostname.replace('www.', '')
+    const map = { 'indeed.com': 'Indeed', 'remoteok.com': 'RemoteOK', 'weworkremotely.com': 'WWR', 'remotive.com': 'Remotive', 'linkedin.com': 'LinkedIn', 'freelancer.com': 'Freelancer', 'upwork.com': 'Upwork', 'fiverr.com': 'Fiverr' }
+    for (const [k, v] of Object.entries(map)) { if (host.includes(k)) return v }
+    return host.split('.')[0]
+  } catch { return '—' }
+}
+
 function TableRow({ app, onClick }) {
-  const color = app.fit_score >= 8 ? 'var(--green)' : app.fit_score >= 6 ? 'var(--yellow)' : 'var(--red)'
   const days = daysSince(app.created_at)
   const statusColors = {
     discovered: 'var(--text-3)', applied: 'var(--blue)', responded: 'var(--yellow)',
-    interview: 'var(--green)', offer: 'var(--purple)', rejected: 'var(--red)', approved: 'var(--yellow)'
+    interview: 'var(--green)', offer: 'var(--purple)', rejected: 'var(--red)',
+    approved: 'var(--yellow)', tailoring: 'var(--yellow)', ready: 'var(--yellow)',
   }
   return (
     <tr
@@ -103,14 +113,13 @@ function TableRow({ app, onClick }) {
     >
       <td style={{ padding: '10px 12px', fontWeight: 500 }}>{app.company || '—'}</td>
       <td style={{ padding: '10px 12px', color: 'var(--text-2)' }}>{app.role || '—'}</td>
-      <td style={{ padding: '10px 12px' }}>
-        {app.fit_score != null && <span style={{ color, fontWeight: 700 }}>{app.fit_score}</span>}
-      </td>
+      <td style={{ padding: '10px 12px' }}><ScoreDots score={app.fit_score} /></td>
       <td style={{ padding: '10px 12px' }}>
         <span className="status-badge" style={{ background: (statusColors[app.status] || 'var(--text-3)') + '22', color: statusColors[app.status] || 'var(--text-3)' }}>
           {(app.status || '').toUpperCase()}
         </span>
       </td>
+      <td style={{ padding: '10px 12px', color: 'var(--text-3)', fontSize: 12 }}>{sourceLabel(app.job_url)}</td>
       <td style={{ padding: '10px 12px', color: 'var(--text-3)', fontSize: 12 }}>
         {days != null ? (days === 0 ? 'Today' : `${days}d ago`) : '—'}
       </td>
@@ -258,7 +267,7 @@ export default function PipelinePage({ addToast }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-hi)' }}>
-                {['Company', 'Role', 'Score', 'Status', 'Added'].map(h => (
+                {['Company', 'Role', 'Score', 'Status', 'Source', 'Added'].map(h => (
                   <th key={h} style={{ color: 'var(--text-3)', fontSize: 11, fontWeight: 600, letterSpacing: '0.4px', padding: '10px 12px', textAlign: 'left', textTransform: 'uppercase' }}>{h}</th>
                 ))}
               </tr>

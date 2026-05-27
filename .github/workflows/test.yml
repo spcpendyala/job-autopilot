@@ -1,0 +1,171 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 3 * * *'   # 3 AM UTC daily — ai-quality only
+
+env:
+  NODE_VERSION: '20'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1: API Tests — runs on every push and every PR (not on cron)
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  api-tests:
+    name: API Tests (Jest)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+
+    env:
+      TEST_MODE: 'true'
+      TEST_DB_PATH: './data/test.autopilot.db'
+      PORT: 3002
+      TEST_BASE_URL: 'http://localhost:3002'
+      SESSION_SECRET: 'ci-test-secret-32-chars-minimum!!'
+      MULTI_USER: 'true'
+      ADMIN_USER_ID: 'test-admin'
+      # Dummy key — prevents claude.js from throwing at require() time.
+      # No real AI calls happen in TEST_MODE=true.
+      ANTHROPIC_API_KEY: 'test-placeholder-key'
+      GOOGLE_CLIENT_ID: 'test-client-id'
+      GOOGLE_CLIENT_SECRET: 'test-client-secret'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start test server
+        run: |
+          mkdir -p data
+          npm run test:server & echo $! > /tmp/test-server.pid
+          echo "Test server PID: $(cat /tmp/test-server.pid)"
+
+      - name: Wait for test server
+        run: sleep 4
+
+      - name: Seed test DB
+        run: npm run test:seed
+
+      - name: Run API tests
+        run: npm test
+
+      - name: Stop test server
+        if: always()
+        run: kill $(cat /tmp/test-server.pid) 2>/dev/null || true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2: E2E Tests — runs only on push to main (not on PRs; too slow for PRs)
+# ─────────────────────────────────────────────────────────────────────────────
+  e2e-tests:
+    name: E2E Tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: api-tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    env:
+      TEST_MODE: 'true'
+      TEST_DB_PATH: './data/test.autopilot.db'
+      PORT: 3002
+      TEST_BASE_URL: 'http://localhost:3002'
+      SESSION_SECRET: 'ci-test-secret-32-chars-minimum!!'
+      MULTI_USER: 'true'
+      ADMIN_USER_ID: 'test-admin'
+      ANTHROPIC_API_KEY: 'test-placeholder-key'
+      GOOGLE_CLIENT_ID: 'test-client-id'
+      GOOGLE_CLIENT_SECRET: 'test-client-secret'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Start test server
+        run: |
+          mkdir -p data
+          npm run test:server & echo $! > /tmp/test-server.pid
+
+      - name: Wait for test server
+        run: sleep 4
+
+      - name: Seed test DB
+        run: npm run test:seed
+
+      - name: Run E2E tests
+        run: npx playwright test
+
+      - name: Stop test server
+        if: always()
+        run: kill $(cat /tmp/test-server.pid) 2>/dev/null || true
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3: AI Quality — runs only on the daily 3AM cron schedule
+# ─────────────────────────────────────────────────────────────────────────────
+  ai-quality:
+    name: AI Quality Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    env:
+      # TEST_MODE=false so real Claude API calls happen
+      TEST_MODE: 'false'
+      TEST_DB_PATH: './data/ai-quality.db'
+      MULTI_USER: 'false'
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_CLIENT_ID: 'test-client-id'
+      GOOGLE_CLIENT_SECRET: 'test-client-secret'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run AI quality tests
+        run: npx jest tests/ai-quality --forceExit --testTimeout=120000
+
+      - name: Upload quality results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-quality-results-${{ github.run_id }}
+          path: tests/ai-quality/results/
+          retention-days: 30

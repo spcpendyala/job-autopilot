@@ -160,12 +160,30 @@ export default function AdminDashboard({ addToast }) {
             </div>
           </div>
         )}
-        <button className="btn" onClick={runDiscover} disabled={runningDiscover} style={{ marginTop: 8 }}>
-          {runningDiscover ? <><span className="spinner" style={{ marginRight: 8 }} />Running...</> : '🔍 Run Discovery Now'}
-        </button>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button className="btn" onClick={runDiscover} disabled={runningDiscover}>
+            {runningDiscover ? <><span className="spinner" style={{ marginRight: 8 }} />Running...</> : '🔍 Run My Discovery'}
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={async () => {
+              setRunningDiscover(true)
+              try {
+                const r = await fetch('/api/admin/run-discovery', { method: 'POST' })
+                const d = await r.json()
+                setDiscoverResult(d)
+                addToast && addToast(d.message || 'Discovery queued for all users')
+              } catch { setDiscoverResult({ error: 'Failed' }) }
+              finally { setRunningDiscover(false) }
+            }}
+            disabled={runningDiscover}
+          >
+            🌐 Run for All Users
+          </button>
+        </div>
         {discoverResult && (
           <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-2)' }}>
-            {discoverResult.error ? `Error: ${discoverResult.error}` : `Fetched ${discoverResult.discovered||0} · Scored ${discoverResult.scored||0} · Queued ${discoverResult.queued||0}`}
+            {discoverResult.error ? `Error: ${discoverResult.error}` : (discoverResult.message || `Fetched ${discoverResult.discovered||0} · Scored ${discoverResult.scored||0} · Queued ${discoverResult.queued||0}`)}
           </div>
         )}
       </div>
