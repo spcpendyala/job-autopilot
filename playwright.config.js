@@ -7,12 +7,12 @@ module.exports = defineConfig({
   timeout: 30000,
   retries: 1,
   workers: 1,
-  reporter: 'list',
+  reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
   use: {
-    baseURL: process.env.TEST_BASE_URL || 'http://localhost:3002',
+    baseURL: process.env.E2E_BASE_URL || process.env.TEST_BASE_URL || 'http://localhost:3001',
     headless: true,
     screenshot: 'only-on-failure',
-    video: 'off',
+    video: 'retain-on-failure',
   },
   projects: [
     {

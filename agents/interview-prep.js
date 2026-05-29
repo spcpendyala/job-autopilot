@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { callClaude } = require('../services/claude');
 
-const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
+const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'default'}.json`);
 const resumePath = path.join(__dirname, '..', 'core', 'base-resume.md');
 
 const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));

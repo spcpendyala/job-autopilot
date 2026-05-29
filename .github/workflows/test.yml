@@ -114,7 +114,12 @@ jobs:
       - name: Seed test DB
         run: npm run test:seed
 
-      - name: Run E2E tests
+      - name: Run smoke + API E2E tests
+        run: npx playwright test tests/e2e/smoke.test.js tests/e2e/api.test.js
+        env:
+          E2E_BASE_URL: http://localhost:3002
+
+      - name: Run full E2E tests
         run: npx playwright test
 
       - name: Stop test server
@@ -135,7 +140,7 @@ jobs:
   ai-quality:
     name: AI Quality Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
 
     env:
       # TEST_MODE=false so real Claude API calls happen

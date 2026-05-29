@@ -21,7 +21,10 @@
     "test": "TEST_MODE=true TEST_DB_PATH=./data/test.autopilot.db TEST_BASE_URL=http://localhost:3002 jest tests/api --runInBand --forceExit",
     "test:seed": "TEST_DB_PATH=./data/test.autopilot.db node tests/fixtures/seed.js",
     "test:server": "TEST_MODE=true TEST_DB_PATH=./data/test.autopilot.db PORT=3002 node api/server.js",
-    "test:manual": "node tests/manual-checklist/run-checklist.js"
+    "test:manual": "node tests/manual-checklist/run-checklist.js",
+    "scrape:test": "node scripts/scrape-test.js",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
   },
   "jest": {
     "testEnvironment": "node",
@@ -51,6 +54,7 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pdf-parse": "^1.1.1",
+    "playwright-core": "^1.60.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-dropzone": "^15.0.0",

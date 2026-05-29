@@ -10,6 +10,11 @@
 
 const path = require('path');
 const fs = require('fs');
+
+if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'test' || process.env.ANTHROPIC_API_KEY === 'test-placeholder-key') {
+  describe.skip('AI Quality — skipped (no real API key)', () => {});
+} else {
+
 const judge = require('./judge');
 
 // ── Test fixtures ────────────────────────────────────────────────────────────
@@ -109,6 +114,25 @@ const TEST_PROFILE = {
 // ── Setup/teardown ────────────────────────────────────────────────────────────
 
 beforeAll(() => {
+  // Write legacy sai.json profile so legacy agent fallbacks don't crash
+  const profilesDir = path.join(__dirname, '..', '..', 'core', 'profiles');
+  fs.mkdirSync(profilesDir, { recursive: true });
+  fs.writeFileSync(path.join(profilesDir, 'sai.json'), JSON.stringify({
+    name: 'Test User', email: 'test@example.com',
+    targetRoles: ['Operations Manager', 'TAM'],
+    coreSkills: ['Operations', 'Leadership', 'Process Improvement', 'Strategy'],
+    experience: [{ title: 'Senior Manager', company: 'Acme Corp',
+      from: '2018', to: '2024', description: 'Led ops team of 10',
+      highlights: ['Reduced costs 30%', 'Built $50M pipeline'] }],
+    yearsExperience: 7, location: 'Toronto, ON', openToRemote: true,
+    summary: 'Operations leader with 7 years experience',
+  }, null, 2));
+
+  const baseResumePath = path.join(__dirname, '..', '..', 'core', 'base-resume.md');
+  if (!fs.existsSync(baseResumePath)) {
+    fs.writeFileSync(baseResumePath, '# Test User\n\nOperations leader with 7 years experience.\n');
+  }
+
   // Write a test user profile so cover-letter and other agents have context
   const usersDir = path.join(__dirname, '..', '..', 'data', 'users', TEST_USER_ID);
   fs.mkdirSync(path.join(usersDir, 'outputs'), { recursive: true });
@@ -235,3 +259,5 @@ describe('AI Quality — Real Claude API', () => {
   }, 60000);
 
 });
+
+} // end else (real API key guard)

@@ -3,7 +3,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const cron = require('node-cron');
 
 const { getRecentEmails } = require('../services/gmail');
 const { syncToSheets, updateSheetStatus } = require('../services/sheets');
@@ -25,6 +24,7 @@ const {
   getApprovalStats,
   getMetadata,
   setMetadata,
+  getUserPreferences,
 } = require('../services/db');
 const { analyzeApplicationPatterns } = require('../agents/rejection-analyzer');
 
@@ -87,6 +87,18 @@ async function runMorningBrief() {
   console.log('══════════════════════════════════════════\n');
 
   // --- Discovery ---
+  const userId = 'default';
+  const prefs = getUserPreferences(userId);
+  const discoveryMode = prefs?.discovery_mode || 'manual';
+  const lastActive = prefs?.last_active_at ? new Date(prefs.last_active_at) : null;
+  const daysSinceActive = lastActive ? (Date.now() - lastActive.getTime()) / (1000 * 60 * 60 * 24) : 999;
+
+  if (discoveryMode === 'manual') {
+    console.log('[discovery] Skipping — mode is manual. User triggers discovery from app.');
+    console.log('  Set discovery_mode to "auto" in Settings to enable automatic morning scans.');
+  } else if (daysSinceActive > 1) {
+    console.log(`[discovery] Skipping — user inactive for ${daysSinceActive.toFixed(1)} days (threshold: 1)`);
+  } else {
   console.log('🔍 NEW JOBS DISCOVERED');
   console.log('  Scanning RSS feeds...');
   const rssJobs = await scanRSSFeeds().catch(() => []);
@@ -111,6 +123,7 @@ async function runMorningBrief() {
     console.log('  No new jobs found.\n');
   }
   console.log();
+  } // end auto-mode discovery block
 
   // --- Email scan ---
   const applications = getAllApplications();
@@ -265,8 +278,11 @@ async function runMorningBrief() {
   }
 }
 
+// PM2 cron_restart at 08:00 restarts this process, so runMorningBrief() runs
+// once immediately on startup. The node-cron schedule is removed to prevent
+// a double-run when PM2 and node-cron both fire at the same minute.
 runMorningBrief().then(() => {
-  cron.schedule('0 8 * * *', runMorningBrief);
+  console.log('[daily-scan] Complete. PM2 will restart at 08:00 tomorrow.');
 }).catch(err => {
   console.error(err.message);
   process.exit(1);

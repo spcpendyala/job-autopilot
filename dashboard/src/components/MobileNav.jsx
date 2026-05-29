@@ -1,48 +1,52 @@
-const TABS = [
-  { id: 'home',      icon: '🏠', label: 'Home' },
-  { id: 'pipeline',  icon: '📋', label: 'Pipeline' },
-  { id: 'find-job',  icon: '🔍', label: 'Find' },
-  { id: 'inbox',     icon: '📩', label: 'Inbox' },
-  { id: 'freelance', icon: '💼', label: 'Freelance' },
+const NAV_ITEMS = [
+  { id: 'home',     label: 'Home',     emoji: '🏠' },
+  { id: 'pipeline', label: 'Pipeline', emoji: '📋' },
+  { id: 'find-job', label: 'Find Job', emoji: '🔍' },
+  { id: 'inbox',    label: 'Inbox',    emoji: '📬' },
+  { id: 'profile',  label: 'Profile',  emoji: '👤' },
+  { id: 'settings', label: 'Settings', emoji: '⚙️' },
 ]
 
-export default function MobileNav({ active, navigate, queueCount, inboxCount }) {
+export default function MobileNav({ page, navigate, queueCount = 0, inboxCount = 0 }) {
   return (
-    <nav className="mobile-nav" style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0,
-      height: 60, background: 'var(--surface)', borderTop: '1px solid var(--border)',
-      display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', zIndex: 500,
-    }}>
-      {TABS.map(tab => {
-        const isActive = active === tab.id
-        const hasBadge = (tab.id === 'home' && queueCount > 0) || (tab.id === 'inbox' && inboxCount > 0)
+    <nav
+      className="mobile-nav"
+      style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        height: 60, background: 'var(--card)',
+        borderTop: '1px solid var(--border)',
+        display: 'flex', zIndex: 100,
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}
+    >
+      {NAV_ITEMS.map(item => {
+        const isActive = page === item.id
+        const badge = item.id === 'home' ? queueCount : item.id === 'inbox' ? inboxCount : 0
         return (
           <button
-            key={tab.id}
-            onClick={() => navigate(tab.id)}
+            key={item.id}
+            onClick={() => navigate(item.id)}
             style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              gap: 2, background: 'none', border: 'none', cursor: 'pointer',
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 2,
+              background: 'none', border: 'none', cursor: 'pointer',
               color: isActive ? 'var(--green)' : 'var(--text-3)',
-              position: 'relative', minHeight: 44,
+              borderTop: isActive ? '2px solid var(--green)' : '2px solid transparent',
+              position: 'relative', padding: 0,
             }}
           >
-            {isActive && (
-              <span style={{
-                position: 'absolute', top: 4, left: '50%', transform: 'translateX(-50%)',
-                width: 4, height: 4, borderRadius: '50%', background: 'var(--green)',
-              }} />
-            )}
-            <span style={{ fontSize: 20, position: 'relative' }}>
-              {tab.icon}
-              {hasBadge && (
+            <span style={{ fontSize: 18, position: 'relative' }}>
+              {item.emoji}
+              {badge > 0 && (
                 <span style={{
-                  position: 'absolute', top: -2, right: -4,
-                  width: 6, height: 6, borderRadius: '50%', background: 'var(--red)',
-                }} />
+                  position: 'absolute', top: -4, right: -6,
+                  background: 'var(--yellow)', color: '#000',
+                  borderRadius: 100, fontSize: 9, fontWeight: 700,
+                  padding: '1px 4px', lineHeight: 1.2,
+                }}>{badge}</span>
               )}
             </span>
-            <span style={{ fontSize: 10, fontWeight: isActive ? 700 : 400 }}>{tab.label}</span>
+            <span style={{ fontSize: 10, fontWeight: 500 }}>{item.label}</span>
           </button>
         )
       })}

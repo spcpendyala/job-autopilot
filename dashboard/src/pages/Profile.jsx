@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
+import LocationPicker from '../components/LocationPicker.jsx'
 
 function SectionHeader({ title }) {
   return (
@@ -454,6 +455,13 @@ function EditProfile({ form, setForm, onSave, saving, addToast, onBack }) {
             ))}
           </div>
         </div>
+        <div style={{ marginTop: 14 }}>
+          <label className="form-label">Target Locations (up to 5)</label>
+          <LocationPicker
+            value={form.locations || []}
+            onChange={locs => setForm(f => ({ ...f, locations: locs }))}
+          />
+        </div>
       </div>
 
       {/* 2. Summary */}
@@ -757,11 +765,27 @@ export default function Profile({ addToast }) {
   const [resumeContent, setResumeContent] = useState('')
   const [showFullResume, setShowFullResume] = useState(false)
   const [skillsGap, setSkillsGap] = useState(null)
+  const [learnedPrefs, setLearnedPrefs] = useState(null)
+  const [resettingPrefs, setResettingPrefs] = useState(false)
 
   const loadProfile = () => {
     fetch('/api/profile').then(r => r.json()).then(p => { setProfile(p); setForm(p) }).catch(() => { setProfile({}); setForm({}) })
     fetch('/api/profile/resume').then(r => r.json()).then(d => setResumeContent(d.content || '')).catch(() => {})
     fetch('/api/skills-gap').then(r => r.json()).then(setSkillsGap).catch(() => {})
+    fetch('/api/preferences').then(r => r.json()).then(setLearnedPrefs).catch(() => {})
+  }
+
+  const resetPreferences = async () => {
+    setResettingPrefs(true)
+    try {
+      await fetch('/api/preferences', { method: 'DELETE' })
+      setLearnedPrefs(null)
+      addToast('Learned preferences cleared.')
+    } catch {
+      addToast('Failed to reset preferences.', 'error')
+    } finally {
+      setResettingPrefs(false)
+    }
   }
 
   useEffect(() => { loadProfile() }, [])
@@ -812,6 +836,57 @@ export default function Profile({ addToast }) {
             </div>
           </div>
         )}
+        <div style={{ margin: '12px 32px 0', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 'var(--radius)', padding: '14px 18px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--blue)', marginBottom: 8 }}>
+              🧠 Preference Learning — {learnedPrefs?.signal_count || 0} signals recorded
+            </div>
+            {learnedPrefs && learnedPrefs.signal_count > 0 && (
+              <button
+                type="button"
+                onClick={resetPreferences}
+                disabled={resettingPrefs}
+                style={{ background: 'none', border: '1px solid rgba(239,68,68,0.4)', color: 'var(--red)', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}
+              >
+                {resettingPrefs ? 'Resetting…' : 'Reset'}
+              </button>
+            )}
+          </div>
+
+          {(!learnedPrefs || learnedPrefs.signal_count === 0) ? (
+            <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.8 }}>
+              <p style={{ marginBottom: 8 }}>Use the app and we'll learn your preferences automatically:</p>
+              <ul style={{ paddingLeft: 18, margin: 0 }}>
+                <li>Skip jobs you don't want</li>
+                <li>Approve packages you like</li>
+                <li>Apply to roles that fit</li>
+              </ul>
+              <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text-3)' }}>After 5+ actions, your personal preferences will appear here.</p>
+            </div>
+          ) : (
+            <>
+              {learnedPrefs.insights && (
+                <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 8 }}>{learnedPrefs.insights}</p>
+              )}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {learnedPrefs.avoided_companies?.map((c, i) => (
+                  <span key={i} style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 4, color: 'var(--red)', fontSize: 11, padding: '2px 8px' }}>✗ {c}</span>
+                ))}
+                {learnedPrefs.preferred_keywords?.map((k, i) => (
+                  <span key={i} style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 4, color: 'var(--green)', fontSize: 11, padding: '2px 8px' }}>✓ {k}</span>
+                ))}
+                {learnedPrefs.avoided_keywords?.map((k, i) => (
+                  <span key={i} style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 4, color: 'var(--red)', fontSize: 11, padding: '2px 8px' }}>− {k}</span>
+                ))}
+              </div>
+              {learnedPrefs.min_score_threshold && (
+                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 8 }}>
+                  Min score threshold: {learnedPrefs.min_score_threshold}/10
+                </div>
+              )}
+            </>
+          )}
+        </div>
         <ViewProfile
           profile={profile}
           resumeContent={resumeContent}

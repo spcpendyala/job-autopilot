@@ -1,6 +1,11 @@
 const axios = require('axios');
 
 async function fetchJobDescription(url) {
+  // LinkedIn always blocks automated access — fail fast before hitting Jina
+  if (url && url.includes('linkedin.com')) {
+    throw new Error('LINKEDIN_BLOCKED');
+  }
+
   const response = await axios.get(`https://r.jina.ai/${url}`, {
     headers: { 'Accept': 'text/plain' },
     timeout: 15000,

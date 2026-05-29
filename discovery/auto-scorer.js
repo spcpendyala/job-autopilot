@@ -1,6 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const { buildDiscoveryQueries } = require('./query-builder');
 const { fetchFromSource } = require('./source-fetcher');
@@ -10,7 +11,23 @@ const { scoreJobFit } = require('../agents/fit-scorer');
 const { tailorResume } = require('../agents/resume-tailor');
 const { generateCoverLetter } = require('../agents/cover-letter');
 const { scanATSGaps } = require('../agents/ats-scanner');
-const { saveApplication, isDuplicate, addToApprovalQueue, initDB, getProfileStatus } = require('../services/db');
+const { getScoredJobCache, setScoredJobCache } = require('../services/claude');
+const {
+  saveApplication, isDuplicate, addToApprovalQueue, initDB, getProfileStatus,
+  getUserPreferences,
+} = require('../services/db');
+const { getProfilePath } = require('../services/user-paths');
+
+const MAX_JOBS_PER_RUN = parseInt(process.env.MAX_DISCOVERY_JOBS || '15');
+
+// Free keyword pre-filter — runs before any Claude call
+function quickFilter(jobTitle, jobDescription, targetRoles, coreSkills) {
+  const text = (jobTitle + ' ' + (jobDescription || '')).toLowerCase();
+  const roleWords = targetRoles.flatMap(r => r.toLowerCase().split(' '));
+  const skillWords = coreSkills.map(s => s.toLowerCase());
+  const matches = [...roleWords, ...skillWords].filter(k => k.length > 2 && text.includes(k));
+  return matches.length >= 2;
+}
 
 const CONFIG_PATH = path.join(__dirname, '..', 'core', 'config.json');
 
@@ -18,31 +35,65 @@ function readConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { return {}; }
 }
 
-function loadProfile() {
-  const profileName = process.env.ACTIVE_PROFILE || 'sai';
-  return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'core', 'profiles', `${profileName}.json`), 'utf8'));
+function loadProfile(userId = 'default') {
+  const profilePath = getProfilePath(userId);
+  try {
+    return JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+  } catch {
+    // Legacy fallback for old single-user installs
+    const legacyName = process.env.ACTIVE_PROFILE || 'sai';
+    const legacyPath = path.join(__dirname, '..', 'core', 'profiles', `${legacyName}.json`);
+    return JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+  }
 }
 
-async function runDiscovery() {
+// Returns true if this job should be filtered based on user preferences
+function isPreferenceFiltered(job, prefs) {
+  if (!prefs) return false;
+
+  const titleLower  = (job.title   || '').toLowerCase();
+  const companyLower = (job.company || '').toLowerCase();
+
+  if (prefs.avoided_companies?.length) {
+    for (const co of prefs.avoided_companies) {
+      if (companyLower.includes(co.toLowerCase())) return true;
+    }
+  }
+
+  if (prefs.avoided_keywords?.length) {
+    for (const kw of prefs.avoided_keywords) {
+      if (titleLower.includes(kw.toLowerCase())) return true;
+    }
+  }
+
+  return false;
+}
+
+async function runDiscovery(userId = 'default') {
   initDB();
 
-  const status = getProfileStatus();
+  const status = getProfileStatus(userId);
   if (status.approved !== 'true') {
-    console.log('⚠️  Profile not approved. Complete onboarding first.');
+    console.log('[discovery] Profile not approved. Complete onboarding first.');
     return { discovered: 0, scored: 0, queued: 0 };
   }
 
   const config = readConfig();
-  const profile = loadProfile();
-  const queries = buildDiscoveryQueries(profile);
+  const profile = loadProfile(userId);
+  const prefs = getUserPreferences(userId);
+
   const autoTailorThreshold = config.autoTailorThreshold || 7.5;
-  const minScoreToShow = config.minScoreToShow || 6.0;
+  // Prefer the learned threshold; fall back to config; floor at 6.0
+  const minScoreToShow = prefs?.min_score_threshold || config.minScoreToShow || 6.0;
+
+  const queries = buildDiscoveryQueries(profile);
 
   let discovered = 0, scored = 0, queued = 0;
 
   const rolePreview = (profile.targetRoles || []).slice(0, 3).join(', ') || '(no roles set)';
-  console.log(`🔍 Running discovery for: ${rolePreview}...`);
-  console.log(`   Sources: ${queries.length} queries across ${new Set(queries.map(q => q.source)).size} platforms`);
+  console.log(`[discovery] Running for: ${rolePreview}...`);
+  console.log(`[discovery] Sources: ${queries.length} queries across ${new Set(queries.map(q => q.source)).size} platforms`);
+  if (prefs?.insights) console.log(`[discovery] Preferences: ${prefs.insights}`);
 
   const fetchResults = await Promise.allSettled(queries.map(q => fetchFromSource(q)));
   const allJobs = [];
@@ -60,7 +111,7 @@ async function runDiscovery() {
     return true;
   });
 
-  console.log(`   Found ${uniqueJobs.length} unique listings`);
+  console.log(`[discovery] Found ${uniqueJobs.length} unique listings`);
 
   const cutoff = Date.now() - 48 * 60 * 60 * 1000;
   const recentJobs = uniqueJobs.filter(job => {
@@ -69,9 +120,38 @@ async function runDiscovery() {
     return isNaN(d.getTime()) || d.getTime() > cutoff;
   });
 
+  let processedThisRun = 0;
+
   for (const job of recentJobs) {
-    if (isDuplicate(job.url)) continue;
+    if (processedThisRun >= MAX_JOBS_PER_RUN) {
+      console.log(`[discovery] Max jobs per run (${MAX_JOBS_PER_RUN}) reached — stopping`);
+      break;
+    }
+
+    if (isDuplicate(job.url, userId)) continue;
+
+    // Apply preference filters before expensive AI calls
+    if (isPreferenceFiltered(job, prefs)) {
+      console.log(`[discovery] Filtered (preferences): ${job.title}`);
+      continue;
+    }
+
+    // Free keyword check before any Claude call
+    if (!quickFilter(job.title, job.description, profile.targetRoles || [], profile.coreSkills || [])) {
+      console.log(`[FILTERED] ${job.title} — no keyword match`);
+      continue;
+    }
+
     discovered++;
+    processedThisRun++;
+
+    // Disk cache check — skip scoring if we've scored this URL in last 48h
+    const urlHash = crypto.createHash('sha256').update(job.url).digest('hex');
+    const cached = getScoredJobCache(urlHash);
+    if (cached) {
+      console.log(`[discovery] [cached] ${job.title} — score ${cached.score}`);
+      continue;
+    }
 
     const relevant = await isRelevant(job.title, job.description, profile);
     if (!relevant) continue;
@@ -81,15 +161,22 @@ async function runDiscovery() {
       jd = await fetchJobDescription(job.url);
     } catch { continue; }
 
-    let fitResult, atsResult;
+    let fitResult;
+    let atsResult = { criticalMissing: [], keyPhrasesToUse: [] };
     try {
-      [fitResult, atsResult] = await Promise.all([
-        scoreJobFit(jd, job.title, job.company || ''),
-        scanATSGaps(jd),
-      ]);
-    } catch { continue; }
+      fitResult = await scoreJobFit(jd, job.title, job.company || '', userId);
+    } catch (fitErr) {
+      console.warn('[auto-scorer] fit-score failed for', job.title, '—', fitErr.message);
+      continue;
+    }
+    try {
+      atsResult = await scanATSGaps(jd, job.title) || atsResult;
+    } catch (atsErr) {
+      console.warn('[auto-scorer] ATS scan failed for', job.title, '—', atsErr.message);
+    }
 
     scored++;
+    setScoredJobCache(urlHash, { score: fitResult.score, verdict: fitResult.verdict });
 
     if (fitResult.score < minScoreToShow) {
       await new Promise(r => setTimeout(r, 500));
@@ -104,9 +191,9 @@ async function runDiscovery() {
       verdict: fitResult.verdict,
       apply_recommendation: fitResult.applyRecommendation ? 1 : 0,
       raw_score_json: JSON.stringify(fitResult),
-    });
+    }, userId);
 
-    console.log(`  [${fitResult.score}/10] ${job.title} — ${job.company || 'Unknown'} (${job.source})`);
+    console.log(`[discovery] [${fitResult.score}/10] ${job.title} — ${job.company || 'Unknown'} (${job.source})`);
 
     if (fitResult.score >= autoTailorThreshold) {
       try {
@@ -126,12 +213,12 @@ async function runDiscovery() {
           job_description: jd,
           tailored_resume: resume,
           cover_letter: coverLetter,
-        });
+        }, userId);
 
         queued++;
-        console.log(`  ✦ Queued for approval: ${job.title}`);
+        console.log(`[discovery] Queued for approval: ${job.title}`);
       } catch (err) {
-        console.error(`  ✗ Tailor failed: ${err.message}`);
+        console.error(`[discovery] Tailor failed: ${err.message}`);
       }
     }
 
@@ -142,17 +229,17 @@ async function runDiscovery() {
 }
 
 // Backward-compat shim for scripts/daily-scan.js
-async function scoreAndSaveDiscoveredJobs(jobs) {
+async function scoreAndSaveDiscoveredJobs(jobs, userId = 'default') {
   const config = readConfig();
   const autoTailorThreshold = config.autoTailorThreshold || 7.5;
   const scored = [];
 
   let profile = null;
-  try { profile = loadProfile(); } catch { profile = { targetRoles: [], coreSkills: [] }; }
+  try { profile = loadProfile(userId); } catch { profile = { targetRoles: [], coreSkills: [] }; }
 
   for (const job of jobs) {
     if (!job.url) {
-      console.log(`  [skip] ${job.title} — no URL`);
+      console.log(`[discovery] Skip ${job.title} — no URL`);
       continue;
     }
 
@@ -166,7 +253,7 @@ async function scoreAndSaveDiscoveredJobs(jobs) {
         } catch { return 'Unknown'; }
       })();
 
-      const fitScore = await scoreJobFit(jd, job.title, company);
+      const fitScore = await scoreJobFit(jd, job.title, company, userId);
 
       const appId = saveApplication({
         company,
@@ -176,15 +263,15 @@ async function scoreAndSaveDiscoveredJobs(jobs) {
         verdict: fitScore.verdict,
         apply_recommendation: fitScore.applyRecommendation,
         raw_score_json: JSON.stringify(fitScore),
-      });
+      }, userId);
 
-      console.log(`  [${fitScore.score}/10] ${job.title} — ${company}`);
+      console.log(`[discovery] [${fitScore.score}/10] ${job.title} — ${company}`);
 
       if (fitScore.score >= autoTailorThreshold) {
         try {
-          const [atsResult, resume, coverLetter] = await Promise.all([
-            scanATSGaps(jd),
-            tailorResume(jd, job.title, company, null),
+          const atsForTailor = await scanATSGaps(jd, job.title).catch(() => ({ criticalMissing: [], keyPhrasesToUse: [] }));
+          const [resume, coverLetter] = await Promise.all([
+            tailorResume(jd, job.title, company, atsForTailor),
             generateCoverLetter(jd, job.title, company, fitScore.score),
           ]);
           addToApprovalQueue({
@@ -198,16 +285,16 @@ async function scoreAndSaveDiscoveredJobs(jobs) {
             job_description: jd,
             tailored_resume: resume,
             cover_letter: coverLetter,
-          });
-          console.log(`  ✦ [${fitScore.score}] ${job.title} — queued for approval`);
+          }, userId);
+          console.log(`[discovery] [${fitScore.score}] ${job.title} — queued for approval`);
         } catch (tailorErr) {
-          console.log(`  ⚠️  Auto-tailor failed for ${job.title}: ${tailorErr.message.slice(0, 60)}`);
+          console.log(`[discovery] Auto-tailor failed for ${job.title}: ${tailorErr.message.slice(0, 60)}`);
         }
       }
 
       scored.push({ ...job, company, fitScore });
     } catch (err) {
-      console.log(`  [skip] ${job.title} — ${err.message.slice(0, 60)}`);
+      console.log(`[discovery] Skip ${job.title} — ${err.message.slice(0, 60)}`);
     }
 
     await new Promise(r => setTimeout(r, 1000));

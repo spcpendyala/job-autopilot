@@ -3,7 +3,7 @@ const path = require('path');
 const { callClaude } = require('../services/claude');
 
 async function synthesizeProfile(resumeTexts, userId = 'default') {
-  const profileName = process.env.ACTIVE_PROFILE || 'sai';
+  const profileName = process.env.ACTIVE_PROFILE || 'default';
   const n = resumeTexts.length;
 
   const combinedText = resumeTexts

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { UserProvider, useUser } from './UserContext'
 import { ToastProvider, useToast } from './components/Toast'
 import Sidebar from './components/Sidebar'
+import MobileNav from './components/MobileNav'
 import SignInScreen from './components/SignInScreen'
 import Spinner from './components/Spinner'
 import Onboarding from './components/Onboarding'
@@ -15,6 +16,7 @@ import Profile from './pages/Profile'
 import AdminDashboard from './pages/AdminDashboard'
 import Freelance from './pages/Freelance'
 import Inbox from './pages/Inbox'
+import FeedbackWidget from './components/FeedbackWidget'
 import { api } from './lib/api'
 import './styles.css'
 
@@ -27,6 +29,13 @@ function AppShell() {
   const [onboarding, setOnboarding] = useState(false)
   const [queueCount, setQueueCount] = useState(0)
   const [inboxCount, setInboxCount] = useState(0)
+  const [isMobile, setIsMobile]   = useState(window.innerWidth <= 768)
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
 
   const navigate = (target) => {
     const [p, param] = (target || '').split('?')
@@ -115,7 +124,7 @@ function AppShell() {
       case 'profile':
         return <Profile navigate={navigate} addToast={toast} />
       case 'settings':
-        return <Settings navigate={navigate} addToast={toast} />
+        return <Settings navigate={navigate} addToast={toast} user={user} />
       case 'outreach':
         return <Outreach addToast={toast} />
       case 'admin':
@@ -135,19 +144,33 @@ function AppShell() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      <Sidebar
-        active={page}
-        navigate={navigate}
-        isAdmin={isAdmin}
-        queueCount={queueCount}
-        inboxCount={inboxCount}
-        user={user}
-      />
-      <main style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
-        {renderPage()}
-      </main>
-    </div>
+    <>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+        <Sidebar
+          active={page}
+          navigate={navigate}
+          isAdmin={isAdmin}
+          queueCount={queueCount}
+          inboxCount={inboxCount}
+          user={user}
+        />
+        <main style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', paddingBottom: isMobile ? 60 : 0 }}>
+          {renderPage()}
+        </main>
+      </div>
+      {isMobile && (
+        <>
+          <div className="mobile-nav-spacer" style={{ height: 60 }} />
+          <MobileNav
+            page={page}
+            navigate={navigate}
+            queueCount={queueCount}
+            inboxCount={inboxCount}
+          />
+        </>
+      )}
+      <FeedbackWidget currentPage={page} />
+    </>
   )
 }
 

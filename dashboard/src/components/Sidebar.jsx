@@ -1,4 +1,5 @@
 import NotificationBell from './NotificationBell'
+import ThemeToggle from './ThemeToggle.jsx'
 
 export default function Sidebar({ active, navigate, isAdmin, queueCount, inboxCount, user }) {
   const nav = [
@@ -109,6 +110,10 @@ export default function Sidebar({ active, navigate, isAdmin, queueCount, inboxCo
                 {user.email}
               </div>
             </div>
+          </div>
+          {/* Theme toggle */}
+          <div style={{ marginBottom: 8 }}>
+            <ThemeToggle />
           </div>
           {/* Sign out button */}
           <a href="/auth/logout" style={{

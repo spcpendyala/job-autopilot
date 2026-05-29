@@ -3,7 +3,7 @@ const fs = require('fs');
 const { callClaude } = require('../services/claude');
 const { getAllApplications } = require('../services/db');
 
-const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
+const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'default'}.json`);
 
 async function analyzeApplicationPatterns(userId = 'default') {
   let profile = {};

@@ -24,6 +24,9 @@ const {
   addToApplyQueue, getApplyQueue, markApplied, setApplicationApplied, getApprovalStats,
   saveOutreach, getOutreach, updateOutreachStatus, getOutreachStats,
   logPreferenceSignal, getPreferenceSignals, saveApplicationVersion,
+  getUserPreferences, setUserPreferences, deleteUserPreferences, updateLastActive,
+  getUserAdminSettings, setUserAdminSettings, deleteUserAllData,
+  getAdminUsage,
 } = require('../services/db');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'core', 'config.json');
@@ -143,6 +146,15 @@ app.use((req, res, next) => {
 const requireAuth = (req, res, next) => {
   if (req.isAuthenticated()) {
     req.userId = req.user.id;
+    // Check if account is blocked (skip for admin)
+    if (req.userId !== ADMIN_ID && req.userId !== 'default') {
+      try {
+        const adminSettings = getUserAdminSettings(req.userId);
+        if (adminSettings.account_status === 'blocked') {
+          return res.status(403).json({ error: 'Your account has been suspended. Contact the administrator.' });
+        }
+      } catch {}
+    }
     return next();
   }
   // Single-user mode: no auth required
@@ -151,6 +163,15 @@ const requireAuth = (req, res, next) => {
     return next();
   }
   res.status(401).json({ error: 'Not authenticated', loginUrl: '/auth/google' });
+};
+
+// Admin-only middleware — must come after requireAuth (which sets req.userId)
+const requireAdmin = (req, res, next) => {
+  const isAdmin = !ADMIN_ID || req.userId === ADMIN_ID || req.userId === 'default';
+  if (process.env.MULTI_USER === 'true' && !isAdmin) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+  next();
 };
 
 // --- Auth routes (no requireAuth needed) ---
@@ -176,8 +197,10 @@ app.get('/auth/logout', (req, res) => {
 app.get('/auth/me', requireAuth, (req, res) => {
   const adminId = process.env.ADMIN_USER_ID;
   res.json({
-    user: req.user,
-    userId: req.userId,
+    id: req.userId,
+    name: req.user?.name || req.user?.displayName || req.userId,
+    email: req.user?.email || req.user?.emails?.[0]?.value || '',
+    picture: req.user?.picture || req.user?.photos?.[0]?.value || '',
     isAdmin: !!(adminId && adminId.length > 0 && req.userId === adminId),
   });
 });
@@ -209,14 +232,51 @@ if (process.env.TEST_MODE === 'true') {
   });
 }
 
-// --- All /api/* routes require auth ---
-app.use('/api', requireAuth);
-
-// --- Routes ---
-
+// Public routes — must be registered BEFORE the global requireAuth middleware
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+app.get('/api/discover/test', async (req, res) => {
+  const axios = require('axios')
+  const sources = [
+    { name: 'Remotive', url: 'https://remotive.com/api/remote-jobs?category=management&limit=2' },
+    { name: 'Himalayas', url: 'https://himalayas.app/jobs/rss' },
+    { name: 'Jobicy', url: 'https://jobicy.com/api/v2/remote-jobs?count=2' },
+    { name: 'WeWorkRemotely', url: 'https://weworkremotely.com/categories/remote-management-business-jobs.rss' },
+    { name: 'RemoteOK', url: 'https://remoteok.com/remote-operations-jobs.rss' },
+    { name: 'Arbeitnow', url: 'https://arbeitnow.com/api/job-board-api?page=1' },
+  ]
+  const results = await Promise.all(sources.map(async s => {
+    try {
+      const r = await axios.head(s.url, {
+        timeout: 8000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; JobAutoPilot/1.0)' },
+        maxRedirects: 3,
+      })
+      return { name: s.name, url: s.url, status: 'ok', httpCode: r.status }
+    } catch (err) {
+      return { name: s.name, url: s.url, status: 'blocked', httpCode: err.response?.status || 0, error: err.message }
+    }
+  }))
+  res.json({ sources: results })
+})
+
+// --- All /api/* routes require auth ---
+app.use('/api', requireAuth);
+
+// Track last_active_at on every authenticated request (non-blocking)
+app.use('/api', (req, res, next) => {
+  try { updateLastActive(req.userId) } catch {}
+  next()
+});
+
+// In TEST_MODE, shadow AI-heavy endpoints with instant fixture responses
+if (process.env.TEST_MODE === 'true') {
+  app.use(require('../tests/fixtures/mock-routes'));
+}
+
+// --- Routes ---
 
 app.get('/api/applications', (req, res) => {
   const { status, limit, followupDue } = req.query;
@@ -272,18 +332,40 @@ app.get('/api/stats', (req, res) => {
   res.json({ ...stats, avgFitScore, responseRate });
 });
 
-app.post('/api/analyze', async (req, res) => {
-  let { jobUrl, jobDescription, jobTitle, company } = req.body;
-  if (jobUrl && !jobDescription) {
-    jobDescription = await fetchJobDescription(jobUrl);
-  }
-  if (!jobDescription) throw new Error('Provide jobUrl or jobDescription');
+app.post('/api/analyze', requireAuth, async (req, res) => {
+  try {
+    let { jobUrl, jobDescription, jobTitle, company } = req.body;
 
-  const [fitScore, atsGaps] = await Promise.all([
-    scoreJobFit(jobDescription, jobTitle, company),
-    scanATSGaps(jobDescription),
-  ]);
-  res.json({ fitScore, atsGaps, jobDescription });
+    if (jobUrl && jobUrl.includes('linkedin.com')) {
+      return res.json({
+        error: 'linkedin_blocked',
+        userMessage: 'LinkedIn blocks automated access. Copy the job description text from LinkedIn and paste it into the text area instead.',
+      })
+    }
+
+    if (jobUrl && !jobDescription) {
+      jobDescription = await fetchJobDescription(jobUrl);
+    }
+    if (!jobDescription) return res.status(400).json({ error: 'Provide jobUrl or jobDescription' });
+
+    const fitScore = await scoreJobFit(jobDescription, jobTitle, company, req.userId);
+    let atsGaps = { criticalMissing: [], niceToHaveMissing: [], keyPhrasesToUse: [], resumeSections: { summary: [], skills: [], bullets: [] } };
+    try {
+      atsGaps = await scanATSGaps(jobDescription, jobTitle) || atsGaps;
+    } catch (atsErr) {
+      console.warn('[analyze] ATS scan failed:', atsErr.message);
+    }
+    res.json({ fitScore, atsGaps, jobDescription });
+  } catch (err) {
+    if (err.message === 'LINKEDIN_BLOCKED') {
+      return res.json({
+        error: 'linkedin_blocked',
+        userMessage: 'LinkedIn blocks automated access. Copy the job description text from LinkedIn and paste it into the text area instead.',
+      })
+    }
+    console.error('[analyze]', err.message)
+    res.status(500).json({ error: err.message })
+  }
 });
 
 app.post('/api/apply', async (req, res) => {
@@ -535,6 +617,46 @@ app.post('/api/discover', (req, res) => {
   res.json({ discovered });
 });
 
+app.post('/api/discover/run', async (req, res) => {
+  try {
+    const { runDiscovery } = require('../discovery/auto-scorer');
+    const result = await runDiscovery(req.userId);
+    res.json({
+      found: result.discovered,
+      scored: result.scored,
+      queued: result.queued,
+    });
+  } catch (err) {
+    console.error('[discover/run]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/scrape/run', async (req, res) => {
+  try {
+    const profilePath = getProfilePath(req.userId);
+    if (!fs.existsSync(profilePath)) {
+      return res.status(400).json({ error: 'Complete your profile first' });
+    }
+    const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    if (!profile?.targetRoles?.length) {
+      return res.status(400).json({ error: 'Add target roles to your profile first' });
+    }
+    const { includeFreelance = false } = req.body;
+    const { scrapeAllBoards } = require('../scrapers/index');
+    const jobs = await scrapeAllBoards({
+      roles: profile.targetRoles,
+      location: profile.location || 'Canada',
+      openToRemote: profile.openToRemote,
+      includeFreelance,
+    });
+    res.json({ found: jobs.length, jobs: jobs.slice(0, 50) });
+  } catch (err) {
+    console.error('[scrape/run]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/signals', (req, res) => {
   try {
     logPreferenceSignal(req.body, req.userId);
@@ -548,6 +670,30 @@ app.post('/api/preference/signal', (req, res) => {
     logPreferenceSignal(req.body, req.userId);
     res.json({ success: true });
   } catch { res.json({ success: false }); }
+});
+
+// ── Learned preferences ───────────────────────────────────────────────────────
+app.get('/api/preferences', (req, res) => {
+  try {
+    const prefs = getUserPreferences(req.userId);
+    res.json(prefs || { avoided_companies: [], avoided_keywords: [], preferred_keywords: [], min_score_threshold: 6.0, insights: '', signal_count: 0 });
+  } catch { res.json(null); }
+});
+
+app.patch('/api/preferences', (req, res) => {
+  try {
+    const existing = getUserPreferences(req.userId) || {};
+    const updated = { ...existing, ...req.body };
+    setUserPreferences(updated, req.userId);
+    res.json(updated);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/preferences', (req, res) => {
+  try {
+    deleteUserPreferences(req.userId);
+    res.json({ success: true });
+  } catch { res.status(500).json({ error: 'Failed to reset preferences' }); }
 });
 
 // Trigger tailoring for a single discovered application
@@ -627,20 +773,16 @@ app.get('/api/applications/export-csv', (req, res) => {
 });
 
 // Admin config endpoints
-app.get('/api/admin/config', (req, res) => {
-  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default'
-  if (!isAdmin) return res.status(403).json({ error: 'Admin only' })
-  const cfg = readConfig()
-  res.json({ ...cfg, betaMode: process.env.BETA_MODE === 'true', isAdmin: true })
+app.get('/api/admin/config', requireAdmin, (req, res) => {
+  const cfg = readConfig();
+  res.json({ ...cfg, betaMode: process.env.BETA_MODE === 'true' });
 });
 
-app.post('/api/admin/config', (req, res) => {
-  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default'
-  if (!isAdmin) return res.status(403).json({ error: 'Admin only' })
-  const updated = { ...readConfig(), ...req.body }
-  writeConfig(updated)
-  if (req.body.betaMode !== undefined) process.env.BETA_MODE = String(req.body.betaMode)
-  res.json({ success: true, config: updated })
+app.post('/api/admin/config', requireAdmin, (req, res) => {
+  const updated = { ...readConfig(), ...req.body };
+  writeConfig(updated);
+  if (req.body.betaMode !== undefined) process.env.BETA_MODE = String(req.body.betaMode);
+  res.json({ success: true, config: updated });
 });
 
 // --- Phase 15 endpoints ---
@@ -817,33 +959,134 @@ app.post('/api/profile/reject', (req, res) => {
 
 // --- Phase 17: Admin endpoints ---
 
-app.get('/api/admin/users', (req, res) => {
-  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default';
-  if (process.env.MULTI_USER === 'true' && !isAdmin) {
-    return res.status(403).json({ error: 'Admin only' });
-  }
+app.get('/api/admin/stats', requireAdmin, (req, res) => {
   const usersDir = path.join(__dirname, '..', 'data', 'users');
-  if (!fs.existsSync(usersDir)) return res.json({ users: [] });
+  let totalUsers = 0, totalApps = 0, totalQueued = 0, activeUsers = 0, blockedUsers = 0;
+
+  if (fs.existsSync(usersDir)) {
+    const userIds = fs.readdirSync(usersDir)
+      .filter(id => { try { return fs.statSync(path.join(usersDir, id)).isDirectory(); } catch { return false; } });
+    totalUsers = userIds.length;
+    for (const id of userIds) {
+      try {
+        const stats = getStats(id);
+        totalApps += stats.total || 0;
+        totalQueued += stats.interviews || 0;
+        const adminSettings = getUserAdminSettings(id);
+        if (adminSettings.account_status === 'blocked') blockedUsers++;
+        else activeUsers++;
+      } catch {}
+    }
+  }
+
+  const config = readConfig();
+  res.json({
+    totalUsers, totalApps, totalQueued, activeUsers, blockedUsers,
+    discoveryEnabled: config.discoveryEnabled !== false,
+    betaMode: process.env.BETA_MODE === 'true',
+    uptimeSeconds: Math.floor(process.uptime()),
+    nodeVersion: process.version,
+  });
+});
+
+app.get('/api/admin/usage', requireAdmin, (req, res) => {
+  res.json(getAdminUsage());
+});
+
+app.get('/api/admin/usage/export', requireAdmin, (req, res) => {
+  const { byAgent, daily } = getAdminUsage();
+  const lines = ['date,agent,model,calls,input_tokens,output_tokens,cost_usd'];
+  for (const row of daily) {
+    lines.push(`${row.date},all,all,${row.calls},,,${row.cost}`);
+  }
+  for (const row of byAgent) {
+    lines.push(`,${row.agent},${row.model},${row.call_count},${row.total_input},${row.total_output},${row.total_cost}`);
+  }
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="usage-${Date.now()}.csv"`);
+  res.send(lines.join('\n'));
+});
+
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  const usersDir = path.join(__dirname, '..', 'data', 'users');
+  if (!fs.existsSync(usersDir)) return res.json({ users: [], systemStats: { totalUsers: 0, totalApps: 0 } });
 
   const users = fs.readdirSync(usersDir)
-    .filter(id => fs.statSync(path.join(usersDir, id)).isDirectory())
+    .filter(id => {
+      try { return fs.statSync(path.join(usersDir, id)).isDirectory(); } catch { return false; }
+    })
     .map(id => {
       try {
         const profilePath = path.join(usersDir, id, 'profile.json');
         const profile = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};
         const stats = getStats(id);
         const profileStatus = getProfileStatus(id);
+        const adminSettings = getUserAdminSettings(id);
+        // Never include resume or cover letter content
+        const userPrefs = getUserPreferences(id);
+        const lastActive = userPrefs?.last_active_at || null;
+        const daysSinceActive = lastActive
+          ? (Date.now() - new Date(lastActive).getTime()) / (1000 * 60 * 60 * 24)
+          : null;
         return {
           id,
-          name: profile.name || id,
+          displayName: profile.name || id,
           email: profile.email || '',
+          location: profile.location || '',
+          targetRoles: (profile.targetRoles || []).slice(0, 3),
           profileApproved: profileStatus.approved === 'true',
           stats,
+          accountStatus: adminSettings.account_status || 'active',
+          jobsPerDayLimit: adminSettings.jobs_per_day_limit || 0,
+          adminNotes: adminSettings.notes || '',
+          isAdmin: id === ADMIN_ID,
+          lastActive,
+          daysSinceActive: daysSinceActive !== null ? Math.floor(daysSinceActive) : null,
+          discoveryMode: userPrefs?.discovery_mode || 'manual',
         };
-      } catch { return { id, error: 'Could not read profile' }; }
+      } catch { return { id, displayName: id, error: 'Could not read profile' }; }
     });
 
-  res.json({ users });
+  const totalApps = users.reduce((s, u) => s + (u.stats?.total || 0), 0);
+  res.json({ users, systemStats: { totalUsers: users.length, totalApps } });
+});
+
+// Admin: block / unblock a user
+app.post('/api/admin/users/:id/block', requireAdmin, (req, res) => {
+  const { id } = req.params;
+  if (id === ADMIN_ID) return res.status(400).json({ error: 'Cannot block the admin account' });
+  try {
+    setUserAdminSettings(id, { account_status: 'blocked', notes: req.body.notes || null });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/users/:id/unblock', requireAdmin, (req, res) => {
+  try {
+    setUserAdminSettings(req.params.id, { account_status: 'active' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: set per-user job discovery limit
+app.post('/api/admin/users/:id/limit', requireAdmin, (req, res) => {
+  const limit = parseInt(req.body.jobsPerDayLimit) || 0;
+  try {
+    setUserAdminSettings(req.params.id, { jobs_per_day_limit: limit });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Admin: delete a user's data
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  if (id === ADMIN_ID) return res.status(400).json({ error: 'Cannot delete the admin account' });
+  try {
+    deleteUserAllData(id);
+    const userDir = getUserDir(id);
+    if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // --- Phase 8 endpoint ---
@@ -1085,7 +1328,29 @@ app.get('/api/skills-gap', requireAuth, (req, res) => {
   }
 })
 
-// Last discovery status
+// Sources catalog — what this user's next discovery run will search
+app.get('/api/discovery/sources', requireAuth, (req, res) => {
+  try {
+    const { getActiveSources } = require('../discovery/sources-catalog')
+    let profile = {}
+    try {
+      const pPath = getProfilePath(req.userId)
+      if (fs.existsSync(pPath)) profile = JSON.parse(fs.readFileSync(pPath, 'utf8'))
+    } catch {}
+    const sources = getActiveSources(profile)
+    const active = sources.filter(s => s.active).length
+    const byCategory = {}
+    for (const src of sources) {
+      if (!byCategory[src.category]) byCategory[src.category] = []
+      byCategory[src.category].push(src)
+    }
+    res.json({ total: sources.length, active, sources, byCategory })
+  } catch (err) {
+    console.error('[discovery-sources]', err.message)
+    res.status(500).json({ error: 'Failed to load sources catalog' })
+  }
+})
+
 app.get('/api/discover/status', requireAuth, (req, res) => {
   try {
     const cfg = readConfig()
@@ -1103,9 +1368,7 @@ app.get('/api/discover/status', requireAuth, (req, res) => {
 })
 
 // Admin: run discovery for all users
-app.post('/api/admin/run-discovery', requireAuth, async (req, res) => {
-  const isAdmin = !process.env.ADMIN_USER_ID || req.userId === process.env.ADMIN_USER_ID || req.userId === 'default'
-  if (process.env.MULTI_USER === 'true' && !isAdmin) return res.status(403).json({ error: 'Admin only' })
+app.post('/api/admin/run-discovery', requireAdmin, async (req, res) => {
 
   try {
     const usersDir = path.join(__dirname, '..', 'data', 'users')
@@ -1133,6 +1396,43 @@ app.post('/api/admin/run-discovery', requireAuth, async (req, res) => {
   }
 })
 
+// ── Self-service account deletion ─────────────────────────────────────────────
+app.delete('/api/account', async (req, res) => {
+  const userId = req.userId;
+  if (!userId || userId === 'default') {
+    return res.status(400).json({ error: 'Cannot delete the default account in single-user mode.' });
+  }
+
+  try {
+    const tmpDb = new Database(DB_PATH);
+    const tables = [
+      'applications', 'approval_queue', 'apply_queue', 'preference_signals',
+      'user_preferences', 'application_versions', 'outreach', 'email_responses', 'skills_gap',
+    ];
+    for (const t of tables) {
+      try { tmpDb.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(userId); } catch {}
+    }
+    tmpDb.close();
+  } catch (e) {
+    console.error('[account] DB cleanup error:', e.message);
+  }
+
+  // Remove per-user files
+  try {
+    const { getUserDir } = require('../services/user-paths');
+    const userDir = getUserDir(userId);
+    if (fs.existsSync(userDir)) fs.rmSync(userDir, { recursive: true, force: true });
+  } catch (e) {
+    console.error('[account] File cleanup error:', e.message);
+  }
+
+  // Destroy the session
+  req.session.destroy(() => {
+    res.clearCookie('connect.sid');
+    res.json({ success: true });
+  });
+});
+
 // In TEST_MODE, serve the built dashboard so Playwright has a single origin
 if (process.env.TEST_MODE === 'true') {
   const distDir = path.join(__dirname, '..', 'dashboard', 'dist');
@@ -1143,6 +1443,44 @@ if (process.env.TEST_MODE === 'true') {
     });
   }
 }
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+app.post('/api/feedback', requireAuth, (req, res) => {
+  try {
+    const { page, tried, severity, worked, screenshot } = req.body
+    const db2 = new Database(DB_PATH)
+    const result = db2.prepare(
+      `INSERT INTO feedback (user_id, page, tried, severity, worked, screenshot, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
+    ).run(req.userId, page || '', tried || '', severity || '', worked || '', screenshot || '')
+    db2.close()
+    res.json({ id: result.lastInsertRowid })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/admin/feedback', requireAdmin, (req, res) => {
+  try {
+    const db2 = new Database(DB_PATH)
+    const rows = db2.prepare('SELECT * FROM feedback ORDER BY id DESC').all()
+    db2.close()
+    res.json({ feedback: rows })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/admin/feedback/:id/resolve', requireAdmin, (req, res) => {
+  try {
+    const db2 = new Database(DB_PATH)
+    db2.prepare('UPDATE feedback SET resolved = 1 WHERE id = ?').run(req.params.id)
+    db2.close()
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // Global error handler — never sends HTML
 app.use((err, req, res, next) => {

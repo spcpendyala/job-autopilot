@@ -2,13 +2,39 @@ const path = require('path');
 const fs = require('fs');
 const { callClaude } = require('../services/claude');
 
-const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
-const resumePath = path.join(__dirname, '..', 'core', 'base-resume.md');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+function profilePath(userId) { return path.join(DATA_DIR, 'users', userId, 'profile.json'); }
+function resumePath(userId)  { return path.join(DATA_DIR, 'users', userId, 'base-resume.md'); }
 
-const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
-const resume = fs.readFileSync(resumePath, 'utf8');
+function loadUserContext(userId) {
+  let profile = {};
+  let resume = '';
 
-const systemPrompt = `You are an expert career coach and job fit analyst. Evaluate candidate fit against job descriptions.
+  try {
+    profile = JSON.parse(fs.readFileSync(profilePath(userId), 'utf8'));
+  } catch {
+    // Legacy fallback for single-user installs
+    try {
+      const legacyPath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'default'}.json`);
+      profile = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+    } catch {}
+  }
+
+  try {
+    resume = fs.readFileSync(resumePath(userId), 'utf8');
+  } catch {
+    try {
+      resume = fs.readFileSync(path.join(__dirname, '..', 'core', 'base-resume.md'), 'utf8');
+    } catch {}
+  }
+
+  return { profile, resume };
+}
+
+async function scoreJobFit(jobDescription, jobTitle, company, userId = 'default') {
+  const { profile, resume } = loadUserContext(userId);
+
+  const systemPrompt = `You are an expert career coach and job fit analyst. Evaluate candidate fit against job descriptions.
 
 CANDIDATE PROFILE:
 ${JSON.stringify(profile, null, 2)}
@@ -16,7 +42,6 @@ ${JSON.stringify(profile, null, 2)}
 BASE RESUME:
 ${resume}`;
 
-async function scoreJobFit(jobDescription, jobTitle, company) {
   const userMessage = `Evaluate the fit between this candidate and the following job.
 
 Company: ${company || 'Unknown'}

@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { callClaude } = require('../services/claude');
 
-const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
+const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'default'}.json`);
 const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
 
 const systemPrompt = `You are writing cold outreach emails on behalf of ${profile.name}.

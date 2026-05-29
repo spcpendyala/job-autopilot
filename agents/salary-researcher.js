@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { callClaude } = require('../services/claude');
 
-const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'sai'}.json`);
+const profilePath = path.join(__dirname, '..', 'core', 'profiles', `${process.env.ACTIVE_PROFILE || 'default'}.json`);
 const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
 
 const systemPrompt = `You are an expert salary negotiation coach with deep knowledge of Canadian and US tech and operations job markets in 2026.

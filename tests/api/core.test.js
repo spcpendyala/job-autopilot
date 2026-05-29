@@ -26,10 +26,10 @@ describe('Health & Auth', () => {
     expect(res.body.timestamp).toBeDefined();
   });
 
-  test('GET /auth/me returns userId', async () => {
+  test('GET /auth/me returns user id', async () => {
     const res = await agent.get('/auth/me');
     expect(res.status).toBe(200);
-    expect(res.body.userId).toBeDefined();
+    expect(res.body.id).toBeDefined();
   });
 
   test('GET /api/setup-status returns profileApproved flag', async () => {

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import Spinner from './Spinner'
 import { profileCompleteness } from '../lib/api'
+import LocationPicker from './LocationPicker.jsx'
 
 // ── Progress bar ─────────────────────────────────────────────────────────────
 function ProgressBar({ step, total }) {
@@ -144,23 +145,35 @@ function StepUpload({ onNext, onManual, addToast }) {
         </div>
       ) : (
         <div
-          onClick={() => fileRef.current?.click()}
-          onDragOver={e => { e.preventDefault(); setDragging(true) }}
+          onClick={() => !loading && fileRef.current?.click()}
+          onDragOver={e => { e.preventDefault(); if (!loading) setDragging(true) }}
           onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
+          onDrop={loading ? e => e.preventDefault() : onDrop}
           style={{
-            height: 140, border: `1px dashed ${dragging ? 'var(--green)' : 'var(--border-hi)'}`,
+            height: 140, border: `1px dashed ${loading ? 'var(--border)' : dragging ? 'var(--green)' : 'var(--border-hi)'}`,
             borderRadius: 'var(--radius)', display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-            background: dragging ? 'rgba(34,197,94,0.04)' : 'transparent',
+            alignItems: 'center', justifyContent: 'center', cursor: loading ? 'default' : 'pointer',
+            background: loading ? 'var(--surface)' : dragging ? 'rgba(34,197,94,0.04)' : 'transparent',
             transition: 'all 0.15s', marginBottom: 16,
           }}
         >
-          <div style={{ fontSize: 28, marginBottom: 8 }}>📁</div>
-          <div style={{ fontSize: 14, color: 'var(--text-2)', fontWeight: 500 }}>Drop files here or click to browse</div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
-            PDF, DOCX, or TXT · {MAX_FILES - files.length} slot{MAX_FILES - files.length !== 1 ? 's' : ''} remaining · 10MB each
-          </div>
+          {loading ? (
+            <>
+              <span className="spinner" style={{ width: 24, height: 24, borderWidth: 3, marginBottom: 10 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-2)', fontSize: 13, fontWeight: 500 }}>
+                Processing your resume...
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>Claude is reading your resume (~20s)</div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📁</div>
+              <div style={{ fontSize: 14, color: 'var(--text-2)', fontWeight: 500 }}>Drop files here or click to browse</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
+                PDF, DOCX, or TXT · {MAX_FILES - files.length} slot{MAX_FILES - files.length !== 1 ? 's' : ''} remaining · 10MB each
+              </div>
+            </>
+          )}
         </div>
       )}
       <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.txt"
@@ -232,6 +245,10 @@ function StepUpload({ onNext, onManual, addToast }) {
           No resume? Build your profile manually →
         </button>
       </div>
+      <p style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: 'var(--text-3)' }}>
+        By continuing you agree to our{' '}
+        <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--text-3)' }}>Privacy Policy</a>
+      </p>
     </div>
   )
 }
@@ -370,11 +387,8 @@ function StepPreferences({ onNext }) {
   })
   const [remote, setRemote]         = useState(true)
   const [onsite, setOnsite]         = useState(false)
-  const [allNorthAmerica, setAllNorthAmerica] = useState(true)
-  const [city, setCity]             = useState('')
+  const [locations, setLocations]   = useState(['remote'])
   const [loading, setLoading]       = useState(false)
-
-  const NA_CITIES = 'Toronto, ON · Vancouver, BC · Calgary, AB · Montreal, QC · Ottawa, ON · Edmonton, AB · Winnipeg, MB · New York, NY · Los Angeles, CA · Chicago, IL · Houston, TX · San Francisco, CA · Seattle, WA · Boston, MA · Austin, TX · Denver, CO · Atlanta, GA · Remote'
 
   const toggle = (obj, setObj, key) => setObj(o => ({ ...o, [key]: !o[key] }))
 
@@ -388,8 +402,7 @@ function StepPreferences({ onNext }) {
           workTypes: Object.keys(workTypes).filter(k => workTypes[k]),
           platforms: Object.keys(platforms).filter(k => platforms[k]),
           openToRemote: remote, preferOnsite: onsite,
-          preferredCity: allNorthAmerica ? 'all-north-america' : city,
-          searchRegion: allNorthAmerica ? 'North America' : city,
+          locations,
         }),
       })
       // fire discovery in background, don't wait
@@ -455,30 +468,10 @@ function StepPreferences({ onNext }) {
         <CheckRow label="Open to on-site / hybrid" checked={onsite} onChange={setOnsite} />
 
         <div style={{ marginTop: 12 }}>
-          {/* All North America toggle */}
-          <label style={{
-            display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px',
-            background: allNorthAmerica ? 'rgba(34,197,94,0.08)' : 'var(--surface)',
-            border: `1px solid ${allNorthAmerica ? 'var(--green)' : 'var(--border)'}`,
-            borderRadius: 'var(--radius-sm)', cursor: 'pointer', marginBottom: 10,
-          }}>
-            <input type="checkbox" checked={allNorthAmerica}
-              onChange={e => setAllNorthAmerica(e.target.checked)}
-              style={{ width: 15, height: 15, accentColor: 'var(--green)', cursor: 'pointer', marginTop: 1 }} />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Search all of North America</div>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
-                {NA_CITIES}
-              </div>
-            </div>
-          </label>
-
-          {/* Specific city (only shown when all-NA is off) */}
-          {!allNorthAmerica && (
-            <input className="input" value={city} onChange={e => setCity(e.target.value)}
-              placeholder="e.g. Toronto, ON or New York, NY"
-              style={{ marginTop: 4 }} />
-          )}
+          <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 8 }}>
+            Target locations — pick up to 5
+          </div>
+          <LocationPicker value={locations} onChange={setLocations} />
         </div>
       </div>
 
@@ -519,8 +512,23 @@ function StepDone({ onComplete }) {
             <Spinner size={16} />
             <span>{messages[0]}</span>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 12 }}>
-            Checking: Indeed · Remote OK · Remotive · Upwork...
+          {/* Sources preview */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8 }}>
+              Checking 20+ sources including:
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
+              {['🔍 Indeed', '🏡 We Work Remotely', '🏔 Himalayas', '🌍 Remotive', '🍁 Job Bank Canada'].map(name => (
+                <span key={name} style={{
+                  display: 'inline-block', padding: '3px 10px',
+                  border: '1px solid var(--border)', borderRadius: 20,
+                  fontSize: 12, color: 'var(--text-3)',
+                }}>{name}</span>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>
+              + 15 more sources based on your profile
+            </div>
           </div>
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 16px', display: 'inline-block', fontSize: 13 }}>
             <span style={{ color: 'var(--text-3)' }}>~</span>

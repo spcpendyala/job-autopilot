@@ -152,6 +152,37 @@ function initDB() {
       frequency INTEGER DEFAULT 1,
       last_seen TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS user_admin_settings (
+      user_id TEXT PRIMARY KEY,
+      account_status TEXT DEFAULT 'active',
+      jobs_per_day_limit INTEGER DEFAULT 0,
+      notes TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS usage_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent TEXT,
+      model TEXT,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cost_usd REAL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      page TEXT,
+      tried TEXT,
+      severity TEXT,
+      worked TEXT,
+      screenshot TEXT,
+      timestamp TEXT,
+      resolved INTEGER DEFAULT 0,
+      note TEXT
+    );
   `);
 
   migrateAddUserId();
@@ -457,6 +488,116 @@ function setMetadata(key, value) {
   db.prepare('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)').run(key, String(value));
 }
 
+function getUserAdminSettings(userId) {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  const row = db.prepare('SELECT * FROM user_admin_settings WHERE user_id = ?').get(userId);
+  return row || { user_id: userId, account_status: 'active', jobs_per_day_limit: 0, notes: null };
+}
+
+function setUserAdminSettings(userId, patch) {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  const current = getUserAdminSettings(userId);
+  const updated = { ...current, ...patch };
+  db.prepare(`
+    INSERT INTO user_admin_settings (user_id, account_status, jobs_per_day_limit, notes, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET
+      account_status = excluded.account_status,
+      jobs_per_day_limit = excluded.jobs_per_day_limit,
+      notes = excluded.notes,
+      updated_at = excluded.updated_at
+  `).run(userId, updated.account_status, updated.jobs_per_day_limit || 0, updated.notes || null);
+}
+
+function deleteUserAllData(userId) {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  const tables = [
+    'applications', 'approval_queue', 'apply_queue', 'preference_signals',
+    'user_preferences', 'application_versions', 'outreach', 'email_responses',
+    'skills_gap', 'user_admin_settings', 'profile_status', 'uploaded_resumes',
+  ];
+  for (const t of tables) {
+    try { db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(userId); } catch {}
+  }
+}
+
+function logUsage({ agent, model, inputTokens, outputTokens }) {
+  if (!db) return;
+  const RATES = {
+    haiku:  { in: 0.80 / 1e6, out: 4.00 / 1e6 },
+    sonnet: { in: 3.00 / 1e6, out: 15.00 / 1e6 },
+  };
+  const tier = (model || '').includes('haiku') ? RATES.haiku : RATES.sonnet;
+  const cost = (inputTokens || 0) * tier.in + (outputTokens || 0) * tier.out;
+  try {
+    db.prepare('INSERT INTO usage_log (agent, model, input_tokens, output_tokens, cost_usd) VALUES (?, ?, ?, ?, ?)')
+      .run(agent || 'unknown', model || '', inputTokens || 0, outputTokens || 0, cost);
+  } catch {}
+}
+
+function getAdminUsage() {
+  if (!db) return { byAgent: [], totals: {}, daily: [] };
+  try {
+    const byAgent = db.prepare(`
+      SELECT agent, model,
+        SUM(input_tokens) as total_input,
+        SUM(output_tokens) as total_output,
+        ROUND(SUM(cost_usd), 6) as total_cost,
+        COUNT(*) as call_count
+      FROM usage_log
+      GROUP BY agent, model
+      ORDER BY total_cost DESC
+    `).all();
+    const totals = db.prepare(`
+      SELECT
+        SUM(input_tokens) as total_input,
+        SUM(output_tokens) as total_output,
+        ROUND(SUM(cost_usd), 6) as total_cost,
+        COUNT(*) as call_count
+      FROM usage_log
+    `).get() || {};
+    const daily = db.prepare(`
+      SELECT date(created_at) as date,
+        ROUND(SUM(cost_usd), 6) as cost,
+        COUNT(*) as calls
+      FROM usage_log
+      GROUP BY date(created_at)
+      ORDER BY date DESC
+      LIMIT 14
+    `).all();
+    return { byAgent, totals, daily };
+  } catch {
+    return { byAgent: [], totals: {}, daily: [] };
+  }
+}
+
+function getUserPreferences(userId = 'default') {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  const row = db.prepare('SELECT preferences_json FROM user_preferences WHERE user_id = ?').get(userId);
+  if (!row || !row.preferences_json) return null;
+  try { return JSON.parse(row.preferences_json); } catch { return null; }
+}
+
+function setUserPreferences(prefs, userId = 'default') {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  db.prepare(`
+    INSERT INTO user_preferences (user_id, preferences_json, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET preferences_json = excluded.preferences_json, updated_at = excluded.updated_at
+  `).run(userId, JSON.stringify(prefs));
+}
+
+function deleteUserPreferences(userId = 'default') {
+  if (!db) throw new Error('DB not initialized. Call initDB() first.');
+  db.prepare('DELETE FROM user_preferences WHERE user_id = ?').run(userId);
+}
+
+function updateLastActive(userId = 'default') {
+  if (!db) return;
+  const existing = getUserPreferences(userId) || {};
+  setUserPreferences({ ...existing, last_active_at: new Date().toISOString() }, userId);
+}
+
 module.exports = {
   initDB, isDuplicate, saveApplication, getAllApplications, getApplicationsDueFollowUp,
   updateApplicationStatus, updateDriveUrl, getStats,
@@ -466,4 +607,7 @@ module.exports = {
   saveOutreach, getOutreach, updateOutreachStatus, getOutreachStats,
   getMetadata, setMetadata,
   logPreferenceSignal, getPreferenceSignals, saveApplicationVersion,
+  getUserPreferences, setUserPreferences, deleteUserPreferences, updateLastActive,
+  getUserAdminSettings, setUserAdminSettings, deleteUserAllData,
+  logUsage, getAdminUsage,
 };

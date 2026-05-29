@@ -14,7 +14,7 @@ export function UserProvider({ children }) {
     fetch('/auth/me', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (d) { setUser(d.user); setIsAdmin(!!d.isAdmin) }
+        if (d) { setUser(d); setIsAdmin(!!d.isAdmin) }
       })
       .catch(() => {})
       .finally(() => setLoading(false))

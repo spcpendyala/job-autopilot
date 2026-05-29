@@ -69,6 +69,11 @@ export default function SignInScreen() {
       <p style={{ marginTop: 32, fontSize: 11, color: 'var(--text-3)' }}>
         Works with: LinkedIn · Indeed · Upwork · Fiverr · Freelancer · Remote OK
       </p>
+      <p style={{ marginTop: 12, fontSize: 11, color: 'var(--text-3)' }}>
+        <a href="/privacy" style={{ color: 'var(--text-3)' }}>Privacy Policy</a>
+        {' · '}
+        <a href="/terms" style={{ color: 'var(--text-3)' }}>Terms of Service</a>
+      </p>
     </div>
   )
 }

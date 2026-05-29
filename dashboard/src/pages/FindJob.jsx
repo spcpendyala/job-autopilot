@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 const STEPS = [
   { label: 'Input', desc: 'Paste a job URL or description' },
@@ -58,7 +58,90 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
   const [applicationId, setApplicationId] = useState(null)
+  const [linkedinBlocked, setLinkedinBlocked] = useState(false)
+  const descRef = useRef(null)
   const [markingApplied, setMarkingApplied] = useState(false)
+
+  // Discovery panel state
+  const [scanning, setScanning] = useState(false)
+  const [scanResult, setScanResult] = useState(null)
+  const [scanError, setScanError] = useState(null)
+  const [discoveryMode, setDiscoveryMode] = useState('manual')
+  const [lastScan, setLastScan] = useState(() => localStorage.getItem('lastDiscoveryScan') || null)
+  const [scraping, setScraping] = useState(false)
+  const [scrapeResult, setScrapeResult] = useState(null)
+  const [scrapeError, setScrapeError] = useState(null)
+  const [includeFreelance, setIncludeFreelance] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/preferences', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (d?.discovery_mode) setDiscoveryMode(d.discovery_mode) })
+      .catch(() => {})
+  }, [])
+
+  const runDiscovery = async () => {
+    setScanning(true)
+    setScanResult(null)
+    setScanError(null)
+    try {
+      const r = await fetch('/api/discover/run', { method: 'POST', credentials: 'include' })
+      const d = await r.json()
+      if (d.error) throw new Error(d.error)
+      setScanResult(d)
+      const now = new Date().toISOString()
+      setLastScan(now)
+      localStorage.setItem('lastDiscoveryScan', now)
+    } catch (err) {
+      setScanError(err.message)
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const setMode = async (mode) => {
+    setDiscoveryMode(mode)
+    try {
+      await fetch('/api/preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ discovery_mode: mode }),
+      })
+    } catch {}
+  }
+
+  const runScrape = async () => {
+    setScraping(true)
+    setScrapeResult(null)
+    setScrapeError(null)
+    try {
+      const r = await fetch('/api/scrape/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ includeFreelance }),
+      })
+      const d = await r.json()
+      if (d.error) throw new Error(d.error)
+      setScrapeResult(d)
+    } catch (err) {
+      setScrapeError(err.message)
+    } finally {
+      setScraping(false)
+    }
+  }
+
+  function formatScanTime(iso) {
+    if (!iso) return 'never'
+    const diff = Date.now() - new Date(iso).getTime()
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins} min ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    return `${Math.floor(hrs / 24)}d ago`
+  }
 
   useEffect(() => {
     if (prefillUrl) {
@@ -79,6 +162,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
       return
     }
     setError(null)
+    setLinkedinBlocked(false)
     setScoring(true)
     setScoringMsg('Fetching job description...')
     const t1 = setTimeout(() => setScoringMsg('Scoring with Claude...'), 3000)
@@ -95,6 +179,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
         }),
       })
       const d = await r.json()
+      if (d.error === 'linkedin_blocked') { setLinkedinBlocked(true); return }
       if (d.error) throw new Error(d.error)
       if (d.jobDescription) setJobDescription(d.jobDescription)
       setResult(d)
@@ -188,6 +273,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
     setResult(null)
     setApplicationId(null)
     setError(null)
+    setLinkedinBlocked(false)
   }
 
   const fitScore = result?.fitScore
@@ -196,7 +282,81 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
 
   return (
     <div style={{ padding: 32, maxWidth: 720 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Find a Job</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 20 }}>Find a Job</h1>
+
+      {/* Discovery hero */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 20, marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>🔍 Find Matching Jobs</div>
+            <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+              Scans 6+ job boards using your profile · Last scan: {formatScanTime(lastScan)}
+            </div>
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={runDiscovery}
+            disabled={scanning}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            {scanning ? <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2, marginRight: 8 }} />Scanning…</> : 'Find My Jobs'}
+          </button>
+        </div>
+
+        {/* Mode toggle — hidden from UI, code preserved for future use */}
+        {false && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Discovery Mode:</span>
+          {['manual', 'auto'].map(m => (
+            <button key={m} onClick={() => setMode(m)} style={{
+              padding: '4px 12px', fontSize: 12, borderRadius: 20, cursor: 'pointer',
+              border: '1px solid',
+              borderColor: discoveryMode === m ? 'var(--blue)' : 'var(--border)',
+              background: discoveryMode === m ? 'var(--blue-dim)' : 'transparent',
+              color: discoveryMode === m ? 'var(--blue)' : 'var(--text-3)',
+            }}>
+              {m === 'manual' ? 'Manual' : 'Auto (8am daily)'}
+            </button>
+          ))}
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+            {discoveryMode === 'manual' ? '⓪ You control when to scan — saves API costs' : '⚙ Runs every morning automatically'}
+          </span>
+        </div>
+        )}
+
+        {/* Scan result */}
+        {scanResult && (
+          <div style={{ marginTop: 14, padding: '10px 14px', background: 'var(--green-dim)', borderRadius: 6, fontSize: 13, color: 'var(--green)' }}>
+            Found {scanResult.found} jobs · {scanResult.scored} scored · {scanResult.queued} added to review queue
+          </div>
+        )}
+        {scanError && (
+          <div style={{ marginTop: 14, padding: '10px 14px', background: 'var(--red-dim)', borderRadius: 6, fontSize: 13, color: 'var(--red)' }}>
+            {scanError} <button onClick={runDiscovery} style={{ marginLeft: 8, background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}>Retry</button>
+          </div>
+        )}
+
+        {/* Playwright scraper */}
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button className="btn btn-ghost btn-sm" onClick={runScrape} disabled={scraping} style={{ fontSize: 13 }}>
+            {scraping ? <><span className="spinner" style={{ width: 12, height: 12, borderWidth: 2, marginRight: 6 }} />Scraping…</> : '🕷 Scrape Job Boards'}
+          </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-2)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={includeFreelance} onChange={e => setIncludeFreelance(e.target.checked)} />
+            Include freelance (Upwork, Fiverr)
+          </label>
+        </div>
+        {scrapeResult && (
+          <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--green-dim)', borderRadius: 6, fontSize: 13, color: 'var(--green)' }}>
+            Scraped {scrapeResult.found} jobs from job boards
+          </div>
+        )}
+        {scrapeError && (
+          <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--red-dim)', borderRadius: 6, fontSize: 13, color: 'var(--red)' }}>
+            Scrape failed: {scrapeError}
+          </div>
+        )}
+      </div>
 
       <ProgressBar currentStep={step} />
 
@@ -204,6 +364,24 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
         <div className="error-msg" style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>{error}</span>
           <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 18 }}>×</button>
+        </div>
+      )}
+
+      {linkedinBlocked && (
+        <div style={{ marginBottom: 20, background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 'var(--radius)', padding: '14px 18px' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>🔒 LinkedIn blocks direct URL access</div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7, marginBottom: 12 }}>
+            To analyze this job:<br />
+            1. Open the LinkedIn job posting in another tab<br />
+            2. Copy the full job description text<br />
+            3. Paste it into the text area below
+          </div>
+          <button
+            onClick={() => { setJobUrl(''); setLinkedinBlocked(false); setTimeout(() => descRef.current?.focus(), 50) }}
+            style={{ background: 'rgba(234,179,8,0.15)', border: '1px solid rgba(234,179,8,0.4)', color: 'var(--yellow)', borderRadius: 6, padding: '6px 14px', fontSize: 13, cursor: 'pointer' }}
+          >
+            Clear URL field
+          </button>
         </div>
       )}
 
@@ -230,6 +408,7 @@ export default function FindJob({ prefillUrl, onNavigatePipeline, addToast }) {
 
           <div className="form-group">
             <textarea
+              ref={descRef}
               className="form-textarea"
               placeholder="Paste the full job description here..."
               value={jobDescription}

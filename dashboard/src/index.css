@@ -25,6 +25,58 @@
   --radius-lg:  16px;
 }
 
+/* ── Light theme overrides (higher specificity than :root) ── */
+html[data-theme="light"] {
+  --bg:         #f8f9fa;
+  --surface:    #ffffff;
+  --card:       #ffffff;
+  --card-hover: #f1f5f9;
+  --border:     #e2e8f0;
+  --border-hi:  #cbd5e1;
+  --text:       #0f172a;
+  --text-2:     #475569;
+  --text-3:     #94a3b8;
+  --green:      #16a34a;
+  --green-dim:  #dcfce7;
+  --yellow:     #d97706;
+  --yellow-dim: #fef3c7;
+  --red:        #dc2626;
+  --red-dim:    #fee2e2;
+  --blue:       #2563eb;
+  --blue-dim:   #dbeafe;
+  --purple:     #7c3aed;
+  --purple-dim: #ede9fe;
+}
+
+/* ── System preference: light (when no explicit theme is set) ── */
+@media (prefers-color-scheme: light) {
+  html:not([data-theme="dark"]):not([data-theme="light"]) {
+    --bg:         #f8f9fa;
+    --surface:    #ffffff;
+    --card:       #ffffff;
+    --card-hover: #f1f5f9;
+    --border:     #e2e8f0;
+    --border-hi:  #cbd5e1;
+    --text:       #0f172a;
+    --text-2:     #475569;
+    --text-3:     #94a3b8;
+    --green:      #16a34a;
+    --green-dim:  #dcfce7;
+    --yellow:     #d97706;
+    --yellow-dim: #fef3c7;
+    --red:        #dc2626;
+    --red-dim:    #fee2e2;
+    --blue:       #2563eb;
+    --blue-dim:   #dbeafe;
+    --purple:     #7c3aed;
+    --purple-dim: #ede9fe;
+  }
+}
+
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: var(--border-hi);
+}
+
 html, body, #root {
   height: 100%;
   background: var(--bg);
